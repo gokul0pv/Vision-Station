@@ -1,0 +1,105 @@
+{
+  "name": "LED panel rev C",
+  "reference_image": "reference.png",
+  "mm_per_px": 0.0,
+  "tools": [
+    {
+      "id": "locate_part",
+      "type": "align",
+      "params": {
+        "method": "template",
+        "roi": [40, 30, 140, 90],
+        "min_score": 0.55,
+        "angle_range": [-4, 4],
+        "angle_step": 1,
+        "critical": true
+      }
+    },
+    {
+      "id": "scale",
+      "type": "calibrate_scale",
+      "params": { "roi": [60, 330, 300, 40], "axis": "x", "known_mm": 25.0, "critical": false }
+    },
+    {
+      "id": "led_row",
+      "type": "count_blob",
+      "params": {
+        "roi": [120, 120, 400, 70],
+        "space": "hsv_v",
+        "threshold": 150,
+        "min_area": 60,
+        "expect_count": 4,
+        "critical": true
+      }
+    },
+    {
+      "id": "led_colours",
+      "type": "color_classify",
+      "params": {
+        "source": "led_row",
+        "expect": ["red", "green", "green", "blue"],
+        "deltaE_max": 40,
+        "critical": true
+      }
+    },
+    {
+      "id": "led_lit",
+      "type": "led_glow",
+      "params": {
+        "source": "led_row",
+        "v_on": 140,
+        "s_on": 50,
+        "expect_state": [true, true, true, true],
+        "critical": true
+      }
+    },
+    {
+      "id": "corner_screws",
+      "type": "count_template",
+      "params": {
+        "roi": [20, 20, 600, 380],
+        "template_roi": [46, 46, 34, 34],
+        "expect_count": 4,
+        "min_score": 0.72,
+        "critical": true
+      }
+    },
+    {
+      "id": "lot_code",
+      "type": "ocv",
+      "params": {
+        "roi": [150, 230, 260, 46],
+        "expect_regex": "^[A-Z]{2}[0-9]{6}$",
+        "upscale": 3.0,
+        "clahe": true,
+        "min_confidence": 0.35,
+        "critical": true
+      }
+    },
+    {
+      "id": "surface",
+      "type": "defect_diff",
+      "params": {
+        "roi": [110, 280, 420, 90],
+        "threshold": 26,
+        "min_area": 30,
+        "open_px": 2,
+        "max_defects": 0,
+        "scratch_elongation": 3.5,
+        "critical": true
+      }
+    },
+    {
+      "id": "body_width",
+      "type": "measure_length",
+      "params": {
+        "roi": [60, 330, 300, 40],
+        "axis": "x",
+        "polarity": "any",
+        "nominal_mm": null,
+        "tolerance_mm": 0.05,
+        "critical": false
+      }
+    }
+  ]
+}

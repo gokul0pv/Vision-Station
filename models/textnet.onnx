@@ -1,0 +1,839 @@
+
+pytorch2.14.0+cu130:¿È
+ö
+image
+e1.0.0.weight
+e1.0.0.weight_biasgetitemnode_Conv_151"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jý
+	namespaceï: __main__.TextNet/e1: torch.nn.modules.container.Sequential/e1.0: torch.nn.modules.container.Sequential/e1.0.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J 
+pkg.torch.onnx.fx_node…%_native_batch_norm_legit_no_training : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d, %p_e1_0_1_weight, %p_e1_0_1_bias, %b_e1_0_1_running_mean, %b_e1_0_1_running_var, 0.1, 1e-05), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'e1', 'e1.0', 'e1.0.1', '_native_batch_norm_legit_no_training']Jì
+pkg.torch.onnx.stack_traceÍFile "/home/claude/vs2/textnet_train.py", line 52, in forward
+    e1 = self.e1(x)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+ð
+getitemrelu	node_relu"ReluJ·
+	namespace©: __main__.TextNet/e1: torch.nn.modules.container.Sequential/e1.0: torch.nn.modules.container.Sequential/e1.0.2: torch.nn.modules.activation.ReLU/relu: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J„
+pkg.torch.onnx.fx_nodej%relu : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem,), kwargs = {})JB
+pkg.torch.onnx.name_scopes$['', 'e1', 'e1.0', 'e1.0.2', 'relu']Jƒ
+pkg.torch.onnx.stack_traceäFile "/home/claude/vs2/textnet_train.py", line 52, in forward
+    e1 = self.e1(x)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ÿ
+relu
+e1.1.0.weight
+e1.1.0.weight_bias	getitem_3node_Conv_153"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e1: torch.nn.modules.container.Sequential/e1.1: torch.nn.modules.container.Sequential/e1.1.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_1: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_1 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_1, %p_e1_1_1_weight, %p_e1_1_1_bias, %b_e1_1_1_running_mean, %b_e1_1_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e1', 'e1.1', 'e1.1.1', '_native_batch_norm_legit_no_training_1']Jì
+pkg.torch.onnx.stack_traceÍFile "/home/claude/vs2/textnet_train.py", line 52, in forward
+    e1 = self.e1(x)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+þ
+	getitem_3relu_1node_relu_1"ReluJ¹
+	namespace«: __main__.TextNet/e1: torch.nn.modules.container.Sequential/e1.1: torch.nn.modules.container.Sequential/e1.1.2: torch.nn.modules.activation.ReLU/relu_1: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jˆ
+pkg.torch.onnx.fx_noden%relu_1 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_3,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e1', 'e1.1', 'e1.1.2', 'relu_1']Jƒ
+pkg.torch.onnx.stack_traceäFile "/home/claude/vs2/textnet_train.py", line 52, in forward
+    e1 = self.e1(x)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+‚
+relu_1
+e2.0.0.weight
+e2.0.0.weight_bias	getitem_6node_Conv_155"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e2: torch.nn.modules.container.Sequential/e2.0: torch.nn.modules.container.Sequential/e2.0.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_2: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_2 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_2, %p_e2_0_1_weight, %p_e2_0_1_bias, %b_e2_0_1_running_mean, %b_e2_0_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e2', 'e2.0', 'e2.0.1', '_native_batch_norm_legit_no_training_2']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 53, in forward
+    e2 = self.e2(e1)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+ÿ
+	getitem_6relu_2node_relu_2"ReluJ¹
+	namespace«: __main__.TextNet/e2: torch.nn.modules.container.Sequential/e2.0: torch.nn.modules.container.Sequential/e2.0.2: torch.nn.modules.activation.ReLU/relu_2: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jˆ
+pkg.torch.onnx.fx_noden%relu_2 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_6,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e2', 'e2.0', 'e2.0.2', 'relu_2']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 53, in forward
+    e2 = self.e2(e1)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+‚
+relu_2
+e2.1.0.weight
+e2.1.0.weight_bias	getitem_9node_Conv_157"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e2: torch.nn.modules.container.Sequential/e2.1: torch.nn.modules.container.Sequential/e2.1.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_3: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_3 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_3, %p_e2_1_1_weight, %p_e2_1_1_bias, %b_e2_1_1_running_mean, %b_e2_1_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e2', 'e2.1', 'e2.1.1', '_native_batch_norm_legit_no_training_3']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 53, in forward
+    e2 = self.e2(e1)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+ÿ
+	getitem_9relu_3node_relu_3"ReluJ¹
+	namespace«: __main__.TextNet/e2: torch.nn.modules.container.Sequential/e2.1: torch.nn.modules.container.Sequential/e2.1.2: torch.nn.modules.activation.ReLU/relu_3: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jˆ
+pkg.torch.onnx.fx_noden%relu_3 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_9,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e2', 'e2.1', 'e2.1.2', 'relu_3']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 53, in forward
+    e2 = self.e2(e1)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ƒ
+relu_3
+e3.0.0.weight
+e3.0.0.weight_bias
+getitem_12node_Conv_159"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e3: torch.nn.modules.container.Sequential/e3.0: torch.nn.modules.container.Sequential/e3.0.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_4: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_4 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_4, %p_e3_0_1_weight, %p_e3_0_1_bias, %b_e3_0_1_running_mean, %b_e3_0_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e3', 'e3.0', 'e3.0.1', '_native_batch_norm_legit_no_training_4']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 54, in forward
+    e3 = self.e3(e2)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+	
+
+getitem_12relu_4node_relu_4"ReluJ¹
+	namespace«: __main__.TextNet/e3: torch.nn.modules.container.Sequential/e3.0: torch.nn.modules.container.Sequential/e3.0.2: torch.nn.modules.activation.ReLU/relu_4: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_4 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_12,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e3', 'e3.0', 'e3.0.2', 'relu_4']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 54, in forward
+    e3 = self.e3(e2)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ƒ
+relu_4
+e3.1.0.weight
+e3.1.0.weight_bias
+getitem_15node_Conv_161"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e3: torch.nn.modules.container.Sequential/e3.1: torch.nn.modules.container.Sequential/e3.1.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_5: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_5 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_5, %p_e3_1_1_weight, %p_e3_1_1_bias, %b_e3_1_1_running_mean, %b_e3_1_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e3', 'e3.1', 'e3.1.1', '_native_batch_norm_legit_no_training_5']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 54, in forward
+    e3 = self.e3(e2)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+	
+
+getitem_15relu_5node_relu_5"ReluJ¹
+	namespace«: __main__.TextNet/e3: torch.nn.modules.container.Sequential/e3.1: torch.nn.modules.container.Sequential/e3.1.2: torch.nn.modules.activation.ReLU/relu_5: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_5 : [num_users=2] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_15,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e3', 'e3.1', 'e3.1.2', 'relu_5']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 54, in forward
+    e3 = self.e3(e2)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ƒ
+relu_5
+e4.0.0.weight
+e4.0.0.weight_bias
+getitem_18node_Conv_163"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e4: torch.nn.modules.container.Sequential/e4.0: torch.nn.modules.container.Sequential/e4.0.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_6: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_6 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_6, %p_e4_0_1_weight, %p_e4_0_1_bias, %b_e4_0_1_running_mean, %b_e4_0_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e4', 'e4.0', 'e4.0.1', '_native_batch_norm_legit_no_training_6']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 55, in forward
+    e4 = self.e4(e3)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+	
+
+getitem_18relu_6node_relu_6"ReluJ¹
+	namespace«: __main__.TextNet/e4: torch.nn.modules.container.Sequential/e4.0: torch.nn.modules.container.Sequential/e4.0.2: torch.nn.modules.activation.ReLU/relu_6: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_6 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_18,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e4', 'e4.0', 'e4.0.2', 'relu_6']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 55, in forward
+    e4 = self.e4(e3)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ƒ
+relu_6
+e4.1.0.weight
+e4.1.0.weight_bias
+getitem_21node_Conv_165"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/e4: torch.nn.modules.container.Sequential/e4.1: torch.nn.modules.container.Sequential/e4.1.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_7: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_7 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_7, %p_e4_1_1_weight, %p_e4_1_1_bias, %b_e4_1_1_running_mean, %b_e4_1_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'e4', 'e4.1', 'e4.1.1', '_native_batch_norm_legit_no_training_7']Jí
+pkg.torch.onnx.stack_traceÎFile "/home/claude/vs2/textnet_train.py", line 55, in forward
+    e4 = self.e4(e3)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+	
+
+getitem_21relu_7node_relu_7"ReluJ¹
+	namespace«: __main__.TextNet/e4: torch.nn.modules.container.Sequential/e4.1: torch.nn.modules.container.Sequential/e4.1.2: torch.nn.modules.activation.ReLU/relu_7: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_7 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_21,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'e4', 'e4.1', 'e4.1.2', 'relu_7']J„
+pkg.torch.onnx.stack_traceåFile "/home/claude/vs2/textnet_train.py", line 55, in forward
+    e4 = self.e4(e3)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+í
+relu_7
+
+up1.weight
+up1.biasconvolutionnode_convolution"ConvTranspose*
+group *
+auto_pad"NOTSET *
+strides@@ *
+pads@ @ @ @  *
+output_padding@ @  *
+	dilations@@ *
+kernel_shape@@ Jp
+	namespacec: __main__.TextNet/up1: torch.nn.modules.conv.ConvTranspose2d/convolution: aten.convolution.defaultJ{
+pkg.torch.onnx.class_hierarchyY['__main__.TextNet', 'torch.nn.modules.conv.ConvTranspose2d', 'aten.convolution.default']JÖ
+pkg.torch.onnx.fx_node»%convolution : [num_users=1] = call_function[target=torch.ops.aten.convolution.default](args = (%relu_7, %p_up1_weight, %p_up1_bias, [2, 2], [0, 0], [1, 1], True, [0, 0], 1), kwargs = {})J8
+pkg.torch.onnx.name_scopes['', 'up1', 'convolution']JŽ
+pkg.torch.onnx.stack_traceïFile "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/conv.py", line 1198, in forward
+    return F.conv_transpose2d(
+
+convolution
+relu_5catnode_cat"Concat*
+axis J5
+	namespace(: __main__.TextNet/cat: aten.cat.defaultJJ
+pkg.torch.onnx.class_hierarchy(['__main__.TextNet', 'aten.cat.default']J“
+pkg.torch.onnx.fx_nodey%cat : [num_users=1] = call_function[target=torch.ops.aten.cat.default](args = ([%convolution, %relu_5], 1), kwargs = {})J)
+pkg.torch.onnx.name_scopes['', 'cat']J
+pkg.torch.onnx.stack_traceoFile "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+
+cat
+d1.0.0.weight
+d1.0.0.weight_bias
+getitem_24node_Conv_167"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/d1: torch.nn.modules.container.Sequential/d1.0: torch.nn.modules.container.Sequential/d1.0.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_8: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_8 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_8, %p_d1_0_1_weight, %p_d1_0_1_bias, %b_d1_0_1_running_mean, %b_d1_0_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'd1', 'd1.0', 'd1.0.1', '_native_batch_norm_legit_no_training_8']JŠ
+pkg.torch.onnx.stack_traceëFile "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+ž	
+
+getitem_24relu_8node_relu_8"ReluJ¹
+	namespace«: __main__.TextNet/d1: torch.nn.modules.container.Sequential/d1.0: torch.nn.modules.container.Sequential/d1.0.2: torch.nn.modules.activation.ReLU/relu_8: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_8 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_24,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'd1', 'd1.0', 'd1.0.2', 'relu_8']J¡
+pkg.torch.onnx.stack_trace‚File "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ 
+relu_8
+d1.1.0.weight
+d1.1.0.weight_bias
+getitem_27node_Conv_169"Conv*
+group *
+pads@@@@ *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Jÿ
+	namespaceñ: __main__.TextNet/d1: torch.nn.modules.container.Sequential/d1.1: torch.nn.modules.container.Sequential/d1.1.1: torch.nn.modules.batchnorm.BatchNorm2d/_native_batch_norm_legit_no_training_9: aten._native_batch_norm_legit_no_training.defaultJV
+!pkg.onnxscript.rewriter.rule_name1FuseBatchNormIntoConv, RemoveOptionalBiasFromConvJè
+pkg.torch.onnx.class_hierarchyÅ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.batchnorm.BatchNorm2d', 'aten._native_batch_norm_legit_no_training.default']J¤
+pkg.torch.onnx.fx_node‰%_native_batch_norm_legit_no_training_9 : [num_users=1] = call_function[target=torch.ops.aten._native_batch_norm_legit_no_training.default](args = (%conv2d_9, %p_d1_1_1_weight, %p_d1_1_1_bias, %b_d1_1_1_running_mean, %b_d1_1_1_running_var, 0.1, 1e-05), kwargs = {})Jd
+pkg.torch.onnx.name_scopesF['', 'd1', 'd1.1', 'd1.1.1', '_native_batch_norm_legit_no_training_9']JŠ
+pkg.torch.onnx.stack_traceëFile "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/batchnorm.py", line 210, in forward
+    return F.batch_norm(
+ž	
+
+getitem_27relu_9node_relu_9"ReluJ¹
+	namespace«: __main__.TextNet/d1: torch.nn.modules.container.Sequential/d1.1: torch.nn.modules.container.Sequential/d1.1.2: torch.nn.modules.activation.ReLU/relu_9: aten.relu.defaultJÂ
+pkg.torch.onnx.class_hierarchyŸ['__main__.TextNet', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']J‰
+pkg.torch.onnx.fx_nodeo%relu_9 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%getitem_27,), kwargs = {})JD
+pkg.torch.onnx.name_scopes&['', 'd1', 'd1.1', 'd1.1.2', 'relu_9']J¡
+pkg.torch.onnx.stack_trace‚File "/home/claude/vs2/textnet_train.py", line 56, in forward
+    d = self.d1(torch.cat([self.up1(e4), e3], 1))
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/container.py", line 259, in forward
+    input = module(input)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+¬
+relu_9
+head.weight
+	head.biastextmapnode_conv2d_10"Conv*
+group *
+pads@ @ @ @  *
+auto_pad"NOTSET *
+strides@@ *
+	dilations@@ *
+kernel_shape@@ Ja
+	namespaceT: __main__.TextNet/head: torch.nn.modules.conv.Conv2d/conv2d_10: aten.conv2d.defaultJm
+pkg.torch.onnx.class_hierarchyK['__main__.TextNet', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¨
+pkg.torch.onnx.fx_node%conv2d_10 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_9, %p_head_weight, %p_head_bias), kwargs = {})J7
+pkg.torch.onnx.name_scopes['', 'head', 'conv2d_10']J¿
+pkg.torch.onnx.stack_trace File "/home/claude/vs2/textnet_train.py", line 57, in forward
+    return self.head(d)                    # logits at 1/4 resolution
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/conv.py", line 565, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+main_graph*VBe1.0.0.weightj
+locationtextnet.onnx.dataj
+offset0j
+length576p*‘@Bup1.biasJ€É/¾ûˆ;©ÓÙ½P¿©>vZ¨¾þQS=7#½¯(¬¾	€#½0':¾'äC>¿>Ö&¾÷«<Ö?>–>[þ’>â-{¾/å¼>;Ý>o¬> >«Ï€¾fR= 6">4‡¾R~^>Ï|T½œ¾ZÛ.¾W½S=ý‡*>}¹½ÛH>Ô:½ƒ‘¥=Ý]¾|;2¾O4•>­>ª®>1æá>8Çé½Ê‹¾½Ú=‰Ó—=PØ>==ª™¾P,Y¾_]í=÷$
+¾üu:>Ã™œ¾it´=ŸŽ.>>ø&=õe¾ž>k^Ð¾s{1¾F\"¾ÉüA¾ÊS©¾$;;>*š Bhead.weightJ€cSF>pI¿/½„>n ¿íDú¾Å>âg¿.Ï]>®å8>Zqõ¾e¿#Ì¿·:ÿ¾Í¿T¨¿ñ§
+¿¦Ø¿‰™¿ÛÃ9>Vl¿>ÃM>læ¿ÓQ(¿·7>Þ/¿ê/j>™+¿œ€‹>dô¾U­Ù¾™Nü¾*B	head.biasJ(¶ ¿*YBe1.1.0.weightj
+locationtextnet.onnx.dataj
+offset576j
+length9216p*[ Be2.0.0.weightj
+locationtextnet.onnx.dataj
+offset9792j
+length18432p*\  Be2.1.0.weightj
+locationtextnet.onnx.dataj
+offset28224j
+length36864p*]@ Be3.0.0.weightj
+locationtextnet.onnx.dataj
+offset130624j
+length73728p*^@@Be3.1.0.weightj
+locationtextnet.onnx.dataj
+offset278080j
+length147456p*^@@Be4.0.0.weightj
+locationtextnet.onnx.dataj
+offset425536j
+length147456p*^@@Be4.1.0.weightj
+locationtextnet.onnx.dataj
+offset572992j
+length147456p*Y@@B
+up1.weightj
+locationtextnet.onnx.dataj
+offset65088j
+length65536p*_@€Bd1.0.0.weightj
+locationtextnet.onnx.dataj
+offset720448j
+length294912p*] @Bd1.1.0.weightj
+locationtextnet.onnx.dataj
+offset204352j
+length73728p*ZBe1.0.0.weight_biasJ@õŠ¶¾#& ¿Ù‰ï¿¾p@û»„>Ç“D?glj?Úïâ>!ƒ¾{’0?^)Ñ?õ(?4I0?ƒ¹?`}º>4ã(À*ZBe1.1.0.weight_biasJ@~@¥>BŒU=V-$¾Š#Á>}]>{<è>Eó?¿W>×Ñ¦¾§•½Š‰ÿ<`È¬¾^
+`>“ƒü½ªH½½jë²>*› Be2.0.0.weight_biasJ€O¢?ž†N?‰a?¿–T¿ë¤4?‚Ü%?r·¾Õ^?¾tæ> ' ½dï?õÛ>3ty½é”ø>ší^?O?o;¤=–:a?Í¿”¿%9>
+ã’>Ôrp½LÀƒ>"dF>¦ýþ=ÄeH=Àþ? (†»ÞOõ>ÅWo¿sñ6>Lw4=*› Be2.1.0.weight_biasJ€†Iù>$æé¾Šø¾e}U? l;ÂKD¿"x.>¯àu¾võ?2~S?âë? Â&¿Â°%>=f
+?•¤¾&V¯?*à¾÷r¿5ç¾>UYá¾dTB?ŒÙ¤¾½ ¿g¿×>YÊv?hkÄ¿Š¶?”97¿bqÔ?ä*n¿pˆ½ÞV¾*›@Be3.0.0.weight_biasJ€`S¿¿¾’ ‡?R]‘>¾6†>è¾a>œcM=¤t>€l:¼”©k=¸8½Ø›?#F?PáX<= N?j_J?.r=š‹?yñŒ¿ÁSˆ? Â[<1úƒ=có½Âús¿ú’Œ¾I7‰?Z`>°°†½Ú¾È½Fû¥¾Ç'?§,š¾D.–¿
+Qó½‚ç¿û”?>Ð“=šR0>›?u¿Ïlž¿å%„?b[¾)µ¡>ÉäŸ?Œb=^•®¾¸­Z?‰`S>—L¥¿LÃ¾%D¿©¤#¿ ü<•ÿ}?ÃxU>åÉ‹¿ ­>J<O>¿Å7? 0¨?hÃt¿›þq?Ð¿3?*›@Be3.1.0.weight_biasJ€öèB>”3I?’¿f?—“P?ž¹²>Ùi”¾½ˆ¿ˆõŸ<:‡$?<}§½§Lƒ¾VJI?=dÉ¾ÿ£¾Êw	¾Œî‹¿ãyG?xÇB¾,'?ˆûÓ¾è-N?43N?Ÿ¿®*¾ZÞM?å²›¾¢)Ÿ¾†‡Å¾G¨7?wsK?}ŽÓ¾ß”¾÷¢°½ì.Ñ¼\ör?ÃaÆ=Aïb>àÊ¯>¯èH?R¶Ó¾V´6?(Ã—>Ñõ½=|¹?Ç†é¾,ô_¾UV:?M ^?ÂJ?’ò¾d†?÷À>\À=\?,´(>h,D?Î >I%«¾¡v0?âîa?«U?Éˆ?ß´è½òZO?*›@Be4.0.0.weight_biasJ€Z•„¿8p^¿_'l¿Øƒ¿rx‘=@–>Îv¬¾‰‘?Oƒ4¿vÝ?Ðç/¾ô'`>¢À—?‚~^¿à´>ÂÂa¿ ¿¢½¶+f½Pv?{y>zx¿©qI?œ=ú{C=óæ?p1>1ƒé½¸ÿ>f=¦>º7¾åà£¿n^O½§E]>Ai‚>|r?d?œ›u?-P¿°]{¿a‘T¿ÍÑO>a‘R¿èF¾=ÂH1>'?ï¿'Ö ¾ÙœG¿œ~²¼9~„>x8¿õÆ:?j´=?ç>4Õ¿dÁÁ¿•¿Š?} À>¹y¿v¿øÌX>oÙ2=pjƒ?"¾¿vKt>*›@Be4.1.0.weight_biasJ€Ûò®¿3b%?±ic?ç#h>âø=štý>R±y?™¶¶?¹Â>Â‹š½·g>®Æ„>s¬/?É>>0Ip>û?DZ? éB:­‹±?TJ?œÕÈ>¸ï*=i
+>=…?a1ú¾)¸Í=@O¾† ?od†¿’()?cÀy?€/¼Ð.=¼(úß½™È²½=Œ\¿m6>?^Ñ,?¸&?µ;?¥€¾<Œ3?ô	v?ãh=¬–¿JI?#0:?@\­¿@µ/>vÛ‰?®º=ô	7?áO„?Óä*?¨P»=ÊÑë<ªÜB?by§?y1?‘Ç?\½„?:!H?è
+Í>Ëê¡>*›@Bd1.0.0.weight_biasJ€I;>5Éª>µa ?“;¿ù`?iŽ>”Z=Tqô¾ÖæÀ>±ö	¿²[é¾Ê°´>¢‚–?­˜’?„‹=}÷Œ?Xy¡>úi~¾>*3?Vþ>*ÛŽ¾"x¿–üÒ¿˜ZX?’ùŠ>æò}¾ðoþ¾ò	?
+Y>sÒ>„Ò ½$~X?›…r¿A&d?ÜRI=Éžd=>{;=-Ÿ?d²¿Æjr?÷æ\?÷»¾ÂÓ >Nˆ0?hW?ñ¡í>à‘r?_Ò_?ü+Ž¼§né¾­òJ>Ê>¹>\Ç\?ø+-?Ô:¹>Ä¬z>ÚP%¿ÔÉQ>Ÿ™>8®h¿_Yî>®?–nÿ>ˆ/@*› Bd1.1.0.weight_biasJ€B‚´>’ª>„Ã>‹¤C?$v£¾öÜƒ>¬²?é Í>*íš> d¦?„-¬?ü‡t>º™?nïˆ?Ìtf¾"_¾î(?ü p¾œmÉ>>…?ÙÑ‡>@PŠ>Ï›>Ý`?KLž>|]?0A–>„3?~'Ô>Lf?f$~¾üH±?ZÇ
+image
+
+
+
+h
+w"=
+/pkg.torch.export.graph_signature.InputSpec.kind
+USER_INPUT"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"&
+!pkg.torch.onnx.original_node_namexbº
+textmap>
+<8
+
+
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2"?
+0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT".
+!pkg.torch.onnx.original_node_name	conv2d_10j'
+e1.0.0.weight
+
+
+
+
+jÄ
+up1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"/
+!pkg.torch.onnx.original_node_name
+p_up1_biasjÖ
+head.weight
+
+
+ 
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
+!pkg.torch.onnx.original_node_namep_head_weightjÆ
+	head.bias
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"0
+!pkg.torch.onnx.original_node_namep_head_biasj'
+e1.1.0.weight
+
+
+
+
+j'
+e2.0.0.weight
+
+ 
+
+
+j'
+e2.1.0.weight
+
+ 
+ 
+
+j'
+e3.0.0.weight
+
+@
+ 
+
+j'
+e3.1.0.weight
+
+@
+@
+
+j'
+e4.0.0.weight
+
+@
+@
+
+j'
+e4.1.0.weight
+
+@
+@
+
+jÔ
+
+up1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"1
+!pkg.torch.onnx.original_node_namep_up1_weightj(
+d1.0.0.weight
+
+@
+€
+
+j'
+d1.1.0.weight
+
+ 
+@
+
+j 
+e1.0.0.weight_bias
+
+
+j 
+e1.1.0.weight_bias
+
+
+j 
+e2.0.0.weight_bias
+
+
+ j 
+e2.1.0.weight_bias
+
+
+ j 
+e3.0.0.weight_bias
+
+
+@j 
+e3.1.0.weight_bias
+
+
+@j 
+e4.0.0.weight_bias
+
+
+@j 
+e4.1.0.weight_bias
+
+
+@j 
+d1.0.0.weight_bias
+
+
+@j 
+d1.1.0.weight_bias
+
+
+ j#
+getitem
+
+
+
+h
+wj 
+relu
+
+
+
+h
+wj%
+	getitem_3
+
+
+
+h
+wj"
+relu_1
+
+
+
+h
+wjG
+	getitem_6:
+84
+
+ 
+(((h - 1)//2)) + 1
+(((w - 1)//2)) + 1jD
+relu_2:
+84
+
+ 
+(((h - 1)//2)) + 1
+(((w - 1)//2)) + 1jG
+	getitem_9:
+84
+
+ 
+(((h - 1)//2)) + 1
+(((w - 1)//2)) + 1jD
+relu_3:
+84
+
+ 
+(((h - 1)//2)) + 1
+(((w - 1)//2)) + 1jH
+
+getitem_12:
+84
+
+@
+(((h - 1)//4)) + 1
+(((w - 1)//4)) + 1jD
+relu_4:
+84
+
+@
+(((h - 1)//4)) + 1
+(((w - 1)//4)) + 1jH
+
+getitem_15:
+84
+
+@
+(((h - 1)//4)) + 1
+(((w - 1)//4)) + 1jD
+relu_5:
+84
+
+@
+(((h - 1)//4)) + 1
+(((w - 1)//4)) + 1jH
+
+getitem_18:
+84
+
+@
+(((h - 1)//8)) + 1
+(((w - 1)//8)) + 1jD
+relu_6:
+84
+
+@
+(((h - 1)//8)) + 1
+(((w - 1)//8)) + 1jH
+
+getitem_21:
+84
+
+@
+(((h - 1)//8)) + 1
+(((w - 1)//8)) + 1jD
+relu_7:
+84
+
+@
+(((h - 1)//8)) + 1
+(((w - 1)//8)) + 1jM
+convolution>
+<8
+
+@
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2jF
+cat?
+=9
+
+€
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2jL
+
+getitem_24>
+<8
+
+@
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2jH
+relu_8>
+<8
+
+@
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2jL
+
+getitem_27>
+<8
+
+ 
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2jH
+relu_9>
+<8
+
+ 
+2*(((h - 1)//8)) + 2
+2*(((w - 1)//8)) + 2‚‘ 
+0pkg.torch.export.ExportedProgram.graph_signatureÜ
+# inputs
+p_e1_0_0_weight: PARAMETER target='e1.0.0.weight'
+p_e1_0_1_weight: PARAMETER target='e1.0.1.weight'
+p_e1_0_1_bias: PARAMETER target='e1.0.1.bias'
+p_e1_1_0_weight: PARAMETER target='e1.1.0.weight'
+p_e1_1_1_weight: PARAMETER target='e1.1.1.weight'
+p_e1_1_1_bias: PARAMETER target='e1.1.1.bias'
+p_e2_0_0_weight: PARAMETER target='e2.0.0.weight'
+p_e2_0_1_weight: PARAMETER target='e2.0.1.weight'
+p_e2_0_1_bias: PARAMETER target='e2.0.1.bias'
+p_e2_1_0_weight: PARAMETER target='e2.1.0.weight'
+p_e2_1_1_weight: PARAMETER target='e2.1.1.weight'
+p_e2_1_1_bias: PARAMETER target='e2.1.1.bias'
+p_e3_0_0_weight: PARAMETER target='e3.0.0.weight'
+p_e3_0_1_weight: PARAMETER target='e3.0.1.weight'
+p_e3_0_1_bias: PARAMETER target='e3.0.1.bias'
+p_e3_1_0_weight: PARAMETER target='e3.1.0.weight'
+p_e3_1_1_weight: PARAMETER target='e3.1.1.weight'
+p_e3_1_1_bias: PARAMETER target='e3.1.1.bias'
+p_e4_0_0_weight: PARAMETER target='e4.0.0.weight'
+p_e4_0_1_weight: PARAMETER target='e4.0.1.weight'
+p_e4_0_1_bias: PARAMETER target='e4.0.1.bias'
+p_e4_1_0_weight: PARAMETER target='e4.1.0.weight'
+p_e4_1_1_weight: PARAMETER target='e4.1.1.weight'
+p_e4_1_1_bias: PARAMETER target='e4.1.1.bias'
+p_up1_weight: PARAMETER target='up1.weight'
+p_up1_bias: PARAMETER target='up1.bias'
+p_d1_0_0_weight: PARAMETER target='d1.0.0.weight'
+p_d1_0_1_weight: PARAMETER target='d1.0.1.weight'
+p_d1_0_1_bias: PARAMETER target='d1.0.1.bias'
+p_d1_1_0_weight: PARAMETER target='d1.1.0.weight'
+p_d1_1_1_weight: PARAMETER target='d1.1.1.weight'
+p_d1_1_1_bias: PARAMETER target='d1.1.1.bias'
+p_head_weight: PARAMETER target='head.weight'
+p_head_bias: PARAMETER target='head.bias'
+b_e1_0_1_running_mean: BUFFER target='e1.0.1.running_mean' persistent=True
+b_e1_0_1_running_var: BUFFER target='e1.0.1.running_var' persistent=True
+b_e1_0_1_num_batches_tracked: BUFFER target='e1.0.1.num_batches_tracked' persistent=True
+b_e1_1_1_running_mean: BUFFER target='e1.1.1.running_mean' persistent=True
+b_e1_1_1_running_var: BUFFER target='e1.1.1.running_var' persistent=True
+b_e1_1_1_num_batches_tracked: BUFFER target='e1.1.1.num_batches_tracked' persistent=True
+b_e2_0_1_running_mean: BUFFER target='e2.0.1.running_mean' persistent=True
+b_e2_0_1_running_var: BUFFER target='e2.0.1.running_var' persistent=True
+b_e2_0_1_num_batches_tracked: BUFFER target='e2.0.1.num_batches_tracked' persistent=True
+b_e2_1_1_running_mean: BUFFER target='e2.1.1.running_mean' persistent=True
+b_e2_1_1_running_var: BUFFER target='e2.1.1.running_var' persistent=True
+b_e2_1_1_num_batches_tracked: BUFFER target='e2.1.1.num_batches_tracked' persistent=True
+b_e3_0_1_running_mean: BUFFER target='e3.0.1.running_mean' persistent=True
+b_e3_0_1_running_var: BUFFER target='e3.0.1.running_var' persistent=True
+b_e3_0_1_num_batches_tracked: BUFFER target='e3.0.1.num_batches_tracked' persistent=True
+b_e3_1_1_running_mean: BUFFER target='e3.1.1.running_mean' persistent=True
+b_e3_1_1_running_var: BUFFER target='e3.1.1.running_var' persistent=True
+b_e3_1_1_num_batches_tracked: BUFFER target='e3.1.1.num_batches_tracked' persistent=True
+b_e4_0_1_running_mean: BUFFER target='e4.0.1.running_mean' persistent=True
+b_e4_0_1_running_var: BUFFER target='e4.0.1.running_var' persistent=True
+b_e4_0_1_num_batches_tracked: BUFFER target='e4.0.1.num_batches_tracked' persistent=True
+b_e4_1_1_running_mean: BUFFER target='e4.1.1.running_mean' persistent=True
+b_e4_1_1_running_var: BUFFER target='e4.1.1.running_var' persistent=True
+b_e4_1_1_num_batches_tracked: BUFFER target='e4.1.1.num_batches_tracked' persistent=True
+b_d1_0_1_running_mean: BUFFER target='d1.0.1.running_mean' persistent=True
+b_d1_0_1_running_var: BUFFER target='d1.0.1.running_var' persistent=True
+b_d1_0_1_num_batches_tracked: BUFFER target='d1.0.1.num_batches_tracked' persistent=True
+b_d1_1_1_running_mean: BUFFER target='d1.1.1.running_mean' persistent=True
+b_d1_1_1_running_var: BUFFER target='d1.1.1.running_var' persistent=True
+b_d1_1_1_num_batches_tracked: BUFFER target='d1.1.1.num_batches_tracked' persistent=True
+x: USER_INPUT
+
+# outputs
+conv2d_10: USER_OUTPUT
+‚]
+2pkg.torch.export.ExportedProgram.range_constraints'{s53: VR[0, int_oo], s0: VR[0, int_oo]}B
+ 

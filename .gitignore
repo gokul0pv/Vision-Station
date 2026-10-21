@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.venv/
+venv/
+
+# Runtime output
+logs/
+results/
+*.db
+*.db-shm
+*.db-wal
+*.partial
+*.dmp
+
+# Projects: only the synthetic demo is published. Real projects hold
+# photographs of production parts and stay on this machine -- a project
+# folder added here later is ignored unless it is listed below.
+projects/*
+!projects/demo_led_panel/
+projects/demo_led_panel/results/
+
+# Exports
+*.vsp
+*_dataset/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# A crop of a production photograph; the tests that use it skip without it
+testdata/real_led_band.png
