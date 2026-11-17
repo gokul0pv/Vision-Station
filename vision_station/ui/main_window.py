@@ -19,6 +19,19 @@ application, not a second implementation. Run it with
 
     python -m vision_station [projects folder]
 """
+
+# Started as a file -- VS Code's Run button, or "python vision_station/ui/main_window.py" -- rather than
+# as part of the package: start the application through the package's entry
+# point instead. Importing on from here would load this module twice (once as
+# __main__), with two copies of every module-level registry.
+if __name__ == "__main__" and not __package__:
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(
+        _os.path.abspath(__file__)))))
+    from vision_station.__main__ import main as _main
+    _sys.exit(_main([_sys.argv[0]] + _sys.argv[1:]))
+
 import collections
 import json
 import os
