@@ -35,5 +35,19 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+
+# Company-specific scripts and data: they stay on this PC
+local/
+
+# Neural networks: fetched or built by scripts/ (get_ocr_models.py,
+# make_backbone.py, make_part_model.py) -- too large for git
+models/ocr/
+models/backbone/
+models/parts/
+
 # A crop of a production photograph; the tests that use it skip without it
-testdata/real_led_band.png
+tests/testdata/real_led_band.png
+
+# Local pip wheels and generated output
+wheels/
+gallery/

@@ -8,14 +8,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python vp_app.py
+rem Run trained models on the GPU when one is usable (falls back to CPU).
+rem Delete this line on a line PC that should stay on the CPU.
+if not defined VS_DEVICE set VS_DEVICE=GPU
+
+python -m vision_station
 if errorlevel 1 (
     echo.
     echo  ========================================================
     echo  The application exited with an error. Checking the
     echo  installation to see whether something is missing...
     echo.
-    python preflight.py
+    python scripts\preflight.py
     echo.
     pause
 )

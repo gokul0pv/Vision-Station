@@ -19,17 +19,17 @@ unsupported Python version. A test also asserts the batch file stays a
 launcher, because logic that creeps back into it becomes untestable again.
 
 ```
-python install.py --dry-run    show what would happen, change nothing
-python install.py --core       core packages only
-python install.py --all        include the large OCR download
+python scripts/install.py --dry-run    show what would happen, change nothing
+python scripts/install.py --core       core packages only
+python scripts/install.py --all        include the large OCR download
 ```
 
 By hand:
 
 ```
 pip install PySide6 opencv-python numpy onnxruntime
-python preflight.py
-python app.py
+python scripts/preflight.py
+python -m vision_station --classic
 ```
 
 `preflight.py` lists every package, what each one is for, and the exact command
@@ -54,6 +54,55 @@ when you need the text tools.
 Note: on the line PC install `onnxruntime`, **not** `onnxruntime-gpu`.
 
 ---
+
+## The simple view and Advanced mode  (vp_app.py)
+
+The application was built as a VisionPro-style engineering tool, and that is
+what it remains under **Advanced mode**. In front of it sits a simple view,
+which is the default, for the two kinds of people who use an inspection
+station without having built it:
+
+- an operator, who runs it and needs the verdict and the reason;
+- a technician or engineer, who sets up a new inspection and needs to be led
+  through it without knowing the vocabulary of machine vision.
+
+**The switch at the top left** -- Run | Build | History (Ctrl+1 / 2 / 3) --
+replaces the menu bar, the Views list and the document tabs. The menus live
+under **More** at the right of the command bar.
+
+**Run** puts the verdict in words above the part images: ACCEPT, REJECT or NOT
+INSPECTED, with one line per check that did not pass, written as a sentence
+(`simple.friendly_message` translates a tool's message: "no OCR engine
+installed -- pip install paddleocr paddlepaddle" becomes "Text reading is not
+installed on this PC. It needs PaddleOCR - whoever set the PC up can add it
+with install.bat."). The recent parts table names failed checks the same way.
+
+**Build** is the Job Editor with a different vocabulary and a guide:
+
+- *Checks*, not Layers; a check still carrying its automatic name is shown by
+  its kind ("Verify text 1"); a named one as "lot code - Verify text". The
+  input/output terminals are not shown.
+- *Add a check* opens a picker grouped by the question being asked -- "Is
+  something there, and how many?", "Is the text or code right?" -- with a
+  search box. Checks that need another check's result, a trained model or a
+  notion from this manual are behind "Show advanced checks" (`schema.QUESTIONS`
+  and `schema.ADVANCED_TYPES`).
+- Settings show the few a check is usually tuned with (`schema.ESSENTIAL`)
+  with a sentence under each (`schema.HELP`), and "Show all settings".
+- The guide lists the five steps -- picture, locate, checks, test, save -- and
+  ticks them off from the state of the job, not from buttons pressed.
+
+**Advanced mode** (More, or View in the menu bar) brings everything back: the
+menu bar, the Toolbox, every tool and setting, terminals, the Tool Edit
+Control's tabs and the document tabs. Both views edit the same recipe; nothing
+is hidden from the file. Operator Mode locks the Build view.
+
+The simple view shows one document at a time, filling the workspace, in
+QMdiArea's sub-window mode with frameless maximized windows. Tabbed mode was
+tried first and keeps the tab bar's height free above the documents even when
+the bar is hidden; taking the viewport margin back re-enters
+`QMdiArea::resizeEvent` and overflows the stack. The tabs return while a Tool
+Edit Control is open, so it can be closed from its tab.
 
 ## Two workspaces
 
@@ -226,19 +275,88 @@ it still runs.
 1. Pylon SDK from baslerweb.com (the SDK must come first)
 2. `pip install pypylon`
 
-**Use**
+**Settings: the camera is opened and set up here, not in Pylon Viewer**
 
-*Start camera* lists the Basler cameras it can actually see, with vendor, model
-and serial, so you pick from a list instead of guessing an index. The status bar
-confirms which camera connected and over which backend.
+**Settings** (command bar, or *More > Settings*) holds everything about the
+camera, per PC:
 
-*File -> Camera settings* controls exposure, gain and white balance. The dialog
+- *Address*: the camera's **IP address** (e.g. `192.168.3.6`) or serial
+  number. An IP address reaches the camera directly, so it works where GigE
+  discovery does not -- on the line PC discovery finds nothing while the
+  camera answers at its address. Empty = the first camera discovery finds.
+  *Find cameras* lists what discovery can see; *Connect* opens the camera and
+  reads its real ranges and current values into the page.
+- *Image*: exposure (ms) and auto, gain (in the camera's own unit) and auto,
+  white balance (continuous, or *Balance once now* on something white), pixel
+  format, gamma ("camera's own" leaves it), black level, mirroring.
+- *Acquisition*: free run, or **external trigger** on an input line (edge,
+  delay). With a trigger each part's picture is the next frame -- no frames are
+  let go by, so the cycle is shorter.
+- *Sensor region*: "as the camera has it" (recommended -- jobs' pictures and
+  boxes are at that size), the whole sensor, or a region (transfers faster).
+  The picture is never scaled down.
+- *Network (GigE)*: packet size (9000 with jumbo frames on the network card),
+  inter-packet delay (raise it when frames arrive incomplete), heartbeat timeout.
+
+Pylon Viewer does not need to be open, and must not be: a GigE camera admits
+one connection. "The camera is held by another connection" names the program
+holding it when it can (Pylon Viewer, another copy of Vision Station). A camera
+held by a program that ended abruptly frees itself after its heartbeat timeout
+(3 s); the application retries for that long before giving up.
+
+*Why "controlled by another application" appeared with nothing else open*: the
+application itself held the camera. A camera stopped while it was still opening
+(about 1.5 s, e.g. Live Camera closed or a job switched quickly) carried on
+running after the open finished and kept the camera until the program exited.
+Fixed: a stop during the open now closes the camera, and two opens of one camera
+inside the application wait for each other.
+
+Exported packages and the standalone runner take the address too:
+`camera:192.168.3.6` as the image source.
+
+**Live Camera** (toolbar of the main application, or *Live view...* beside the
+camera number in a job's Image Source) shows the camera's picture at its full
+rate with nothing inspected -- for aiming the camera, positioning the part,
+focusing and choosing an exposure. It has:
+
+- *Exposure* and *Gain* (labelled raw or dB to match the camera), applied live.
+  They are remembered per camera and used whenever a job opens that camera, so
+  set them here once the lighting is fixed. *Auto* is for looking around only.
+- *Guide*: a centre cross, a thirds grid or a 10 x 10 grid over the image, to
+  line the part up the same way every time.
+- The status line: resolution, frames per second, brightness, the share of
+  burnt-out pixels, and a *focus* number for the centre of the frame -- turn
+  the focus ring and stop where it peaks.
+- *Save image...* writes the frame at full resolution, e.g. as a reference.
+
+It shares the camera with running jobs, so it can stay open during a run.
+
+*File -> Camera settings* (classic window) controls exposure, gain and white balance. The dialog
 reads the real limits off your camera and shows them, so you cannot dial in an
 exposure the sensor will silently clamp. Changes apply live while you watch the
 image.
 
 Once your lighting is fixed, turn every auto setting off. Auto exposure drifting
 between parts is one of the most common causes of intermittent false rejects.
+
+**Result pictures (Settings > Results)**
+
+Choose a folder, and every inspected part's picture is saved there: the
+*annotated* picture -- the full-resolution image with the result page's boxes
+and verdict, names and scores on the checks that failed (or on all, or none) --
+and, if wanted, the *original* picture exactly as the camera delivered it. Every
+part, rejected parts only, or accepted only; JPEG (quality 97 by default, about
+5 MB at 20 MP) or lossless PNG; a folder per day. File names carry the time, the
+inspection and ACCEPT/REJECT: `2026-11-17\143502_118_Top_REJECT.jpg`. Pictures
+are written on a background thread, so saving never lengthens an inspection.
+
+**Full-quality display**
+
+The picture on screen has one pixel for every physical screen pixel it covers
+(Windows display scaling included) and every camera pixel from about 60% zoom
+up; reductions average, so fine traces and print do not alias. Before, at 100% a
+5472-pixel frame was drawn from an 1800-pixel copy, and everything between "fit"
+and 300% looked soft.
 
 **Camera family note**
 
@@ -247,6 +365,41 @@ camera: older GigE "classic" ace cameras use `ExposureTimeAbs` and `GainRaw`,
 while USB3, ace2 and dart cameras use `ExposureTime` and `Gain`. This is handled
 automatically -- the code checks which nodes your camera exposes. You do not
 need to know which family you own.
+
+## Find parts (AI): every component found, not boxed one by one
+
+In a job editor, **Find parts (AI)** opens a panel beside the picture:
+
+1. *Area*: the whole picture, or *Draw area...* and drag round the board.
+2. *Find parts*: a neural network on the graphics card proposes every
+   component -- a few seconds for a whole 20-megapixel board (5.4 s for the
+   20-megapixel server board, 259 parts of 48 types, RTX 5060).
+3. *Review*: a box per part, coloured by type (parts that look alike and are
+   the same size are one type, so twelve inductors are "type A x 12"). Click a
+   box to drop it or bring it back; untick a type to drop all of them; name a
+   type ("inductor") and its checks are called inductor_01, inductor_02...;
+   *Sensitivity* re-filters at once without running the network again.
+   *Find all like this...*: drag round one part and every copy of it is found,
+   turned or not -- the 16 SFP cages in 45 ms. The network is weakest where a
+   board is most regular, and matching one example is strongest there.
+4. *Add N checks*: one **Part present** check per kept part, in one step
+   (Ctrl+Z takes them all back). Each is an ordinary check: move, resize,
+   rename or delete its box like any other.
+
+On that board, with two parts painted out, exactly those two checks failed and
+the 212 others passed; 214 checks run in about 1 s (4.5 ms each).
+
+The network is Ultralytics **YOLOE-26s**, prompt-free (September 2026) -- trained
+to find "anything", so it needs no training on your boards. Its own names for
+things are meaningless on a PCB, so `make_part_model.py` cuts them out of the
+model (125x less data back from the GPU; 40 ms per 1280-pixel tile). It runs
+through onnxruntime-directml on the GPU, or the CPU with `VS_DEVICE=CPU`.
+`part_finder.py` does the rest: full-resolution tiles at three zooms so small
+and large parts are both seen, duplicates merged, a box round a group of parts
+told from one big part by which side the network is surer of, bare board and
+the fixture beside the board left out. Model file: `models/parts/parts_yoloe26s.onnx`
+(47 MB). The weights are AGPL-3.0 (Ultralytics): fine for use in-house; selling
+a product with the model inside needs Ultralytics' licence.
 
 ## Rotated regions
 
@@ -342,6 +495,62 @@ camera in front of it, and says so plainly when the unit is raw.
 Nothing here proves the code works against real hardware -- only that it does
 the right thing against a faithful model of the API. The first real camera is
 still the real test.
+
+## Basler: the first real camera (2026-11-13)
+
+A Basler **acA5472-5gc** (GigE classic ace, 5472 x 3648 Bayer colour, 5 fps)
+was connected with Pylon 26.08 and pypylon 26.10. What held up, measured on
+the camera:
+
+- Enumeration, open and the model/serial shown in *Start camera*.
+- The node-name discovery: this camera has `ExposureTimeAbs` (52 us - 10 s) and
+  `GainRaw` (0 - 1957); `ExposureTime`, `Gain` and `GainAbs` exist only as
+  unavailable placeholders and were correctly skipped. Gain is labelled raw.
+- Bayer RG8 to BGR conversion, full resolution, 20 frames in 4 s with no grab
+  errors over the default 1500-byte packet size.
+
+What did not: **every capture after an exposure change used the old
+exposure.** After a change this camera still delivers two frames that were
+exposed before it. `grab_sequence` was meant to discard `settle` frames, but it
+counted how often it *polled* the latest frame (every 20 ms), not new frames;
+at 5 fps a 5 ms + 80 ms pair came back as two copies of the frame from before,
+in 0.25 s. Automatic exposure had the same fault with a fixed 130 ms wait, so
+its search measured stale images. The simulator had hidden both because its
+frames arrived instantly and already carried the new setting.
+
+The camera thread now numbers every frame and records which frame number a
+setting was applied at; a capture waits for `settle` genuinely new frames after
+that. Measured afterwards: 5 ms and 80 ms captures read 1.35 and 25.1 against
+steady-state 1.33 and 24.8. With `settle` 1 or 2 the old exposure still came
+back, so **3 is the minimum for this camera** and the default. A two-capture
+inspection costs about 1.6 s at 5 fps -- the price of being right. If a capture
+times out it is now left out and reported missing, rather than inspected at the
+wrong exposure. `fake_pylon` can now model frame rate and frames in flight
+(`frame_period_s`, `pipeline_depth`) and a test holds the fix.
+
+Three more faults surfaced running jobs against it:
+
+- **A busy camera killed the camera thread silently.** A GigE camera admits one
+  controlling connection; a second open raises "controlled by another
+  application", which was not caught, so the thread died with no backend and no
+  message. Caught naively it would have been worse: the code then falls back to
+  OpenCV device 0 -- a laptop webcam -- and inspects that. Now a Basler that is
+  present but will not open is an error naming the camera and the likely cause
+  (Pylon Viewer still open); OpenCV is used only when there is no Basler at all.
+- **Jobs on the same camera fought over it.** An application with a job per side
+  opened one connection per job; the second was refused. Jobs now share one
+  connection per camera index, closed when the last job lets go.
+- **The first part after opening failed, and later parts could be stale.** A job
+  asked for a frame the instant it opened the camera (which takes about a
+  second), and afterwards took the newest frame -- which at 5 fps can predate the
+  part being in place. A camera grab now waits for the camera to start and
+  returns a frame exposed after the trigger (3 frames on, about 0.6 s here):
+  1.4 s for the first side, 0.6 s for each after.
+
+**Network tip for this camera.** A 20 MP frame is 20 MB; at 5 fps that is
+100 MB/s, close to the whole of gigabit Ethernet. Use a dedicated NIC, enable
+jumbo frames on it (9000 bytes) and raise `GevSCPSPacketSize` to match in Pylon
+Viewer if you see grab errors or dropped frames on the line PC.
 
 ## Responsiveness
 
@@ -528,7 +737,7 @@ when it moves or turns.
 The job tree shows Job -> Sides -> Tools. Click a side to open it.
 
 ```
-python build_chassis_job.py      # builds the seven-side chassis job from its photos
+python local/build_chassis_job.py   # local only: needs the chassis photographs
 ```
 
 The job's verdict is PASS, FAIL -- naming the side and tool that failed -- or
@@ -572,11 +781,11 @@ with real rejects before trusting any threshold.
 
 ### Real-image campaign (bench_real.py, real_checks.py)
 
-`python bench_real.py [job folder]` takes each side's real photograph through
+`python local/bench_real.py [job folder]` takes each side's real photograph through
 line conditions -- shifted, turned, 25% darker and brighter, lower contrast,
 slightly out of focus, sensor noise, JPEG 50 -- which must pass, and plants real
 defects -- labels and screws removed, holes covered, scratches, stains -- which
-must fail on the right check. `python real_checks.py [side folder] [output]`
+must fail on the right check. `python local/real_checks.py [side folder] [output]`
 does the same for screws, part present / absent and measurement on one side,
 reports each check's margin between its worst good score and its best defective
 one, and writes result photographs with an index.html (see real_results/).
@@ -717,7 +926,7 @@ need models trained on your parts.
 -- QuickBuild, a Job Editor, the Train and Graphics tabs, and every tool that
 runs without a model of your own (37 of 40) detecting on the demo board, a
 rejected board, the real chassis and a QR label, plus their diagnostic
-records. `python make_gallery.py` rebuilds it; a test checks that every tool in
+records. `python scripts/make_gallery.py` rebuilds it; a test checks that every tool in
 it works and the rejected board fails for exactly its planted defects.
 
 ## Teach once, run every part: the Python job file
@@ -795,7 +1004,7 @@ cv2.waitKey(0)
 `app.verdict(results)` gives PASS only if every job passed (INCOMPLETE if one
 had no image). `result.annotated(labels=False)` draws shapes without text, and
 `only_failures=True` just what failed. From the command line:
-`python vsruntime.py chassis.vsp part.jpg --job "Front top" --save out.jpg`.
+`python -m vision_station.core.vsruntime chassis.vsp part.jpg --job "Front top" --save out.jpg`.
 See `example_run_package.py`. **File -> Import Package** opens a `.vsp` back in
 QuickBuild as a new application.
 
@@ -830,7 +1039,7 @@ would escape that folder is refused outright.
 - **Color match** -- the region's median colour against the reference as CIE
   delta E, unmoved by a glint or a small mark.
 
-## The VisionPro-style application  (run.bat, or python vp_app.py)
+## The VisionPro-style application  (run.bat, or python -m vision_station)
 
 The default window is now laid out the way Cognex VisionPro QuickBuild is, in
 its three levels. The classic single window is still there: `run_classic.bat`,
@@ -1168,7 +1377,7 @@ without network. (Earlier notes blamed the missing network alone; that is only
 the second failure, after this one.) Both generations are now supported:
 PaddleOCR 3's constructor is tried first, and results are read from either
 `predict()` (version 3) or `ocr()` (version 2). Why a better engine did not
-start is recorded and shown by the installation check -- `python preflight.py`
+start is recorded and shown by the installation check -- `python scripts/preflight.py`
 -- rather than the fallback happening silently.
 
 This was tested against stand-ins that reproduce each version's interface,
@@ -1341,7 +1550,7 @@ blob, caliper, OCR and ID. These fill the gaps: **Find Line**, **Find Circle**,
 laid across the expected edge, each finds one edge point to sub-pixel precision,
 and a line or circle is fitted through them, discarding the worst few points as
 outliers (VisionPro's NumToIgnore). Measured against edges of exactly known
-position, with blur and noise (`python bench_geometry.py`):
+position, with blur and noise (`python benchmarks/bench_geometry.py`):
 
 ```
   Find Circle   centre 0.08 px mean, 0.14 worst    radius 0.02 px mean
@@ -1482,123 +1691,113 @@ Settings tab. How much speed buys depends entirely on the processor: this Xeon
 has reduced-precision hardware, and an older line PC may gain little. Run
 
 ```
-python bench_inference.py
+python benchmarks/bench_inference.py
 ```
 
 **on the line PC itself.** It times every model under each runtime and precision,
 reports how far speed mode moves the outputs, and says whether switching is
 worth it on that machine.
 
-## AI text detection
+## Reading text  (2026-11-16)
 
-**Tools -> Text and codes -> AI text detection.** A trained network finds every
-line of print in the region, then each line is read.
+**Text and codes -> Read text**, and **Verify text**. One reader serves both.
+Draw a loose box round where the print is - a label, a corner of a board, the
+whole image - and it finds every line inside, at any angle, and reads each.
+There is nothing to tune for orientation, polarity or thresholds.
 
-The model is not downloaded or pretrained. `textnet_train.py` builds it from
-generated data in about fifteen minutes on a CPU, and the result is a 41 kB
-ONNX file that runs in roughly 16 ms:
+It replaced three tools that disagreed (Read text on a fixed box, Find and read
+all text, AI text detection). On a circuit board photographed upside down they
+returned `17 1111111.1`, `MMYTTYYY` and nothing, taking up to 95 seconds on
+the CPU. Recipes that contain the two removed tools still load and run: they
+now run this reader.
 
-```
-python textnet_train.py --minutes 15      # resumes from any existing checkpoint
-```
+How it reads:
 
-It is a small encoder-decoder, about 100k parameters, predicting per pixel
-whether that pixel belongs to a line of print. Boxes come from connected
-components of that map afterwards. Segmentation rather than box regression,
-because industrial labels carry text at any orientation.
+1. **Detect.** A PP-OCRv6 detector marks every line of print, working on the
+   photograph as taken - no thresholding, which is what destroyed faint
+   silk-screen and low-contrast laser marking.
+2. **Tile.** A region over 1280 px is cut into overlapping tiles at full
+   resolution, so 15 px print on a 20-megapixel image is still 15 px when the
+   detector sees it. Lines cut by a tile seam are joined again.
+3. **Look closer.** If the print found is under about 16 px tall, the region
+   is examined again at twice the size.
+4. **Read every way up.** Each line is cut out along its own angle and read
+   both ways up - all four for a nearly square marking such as `R15` on a
+   component. Where two readings are close, the way up the rest of the
+   region's print agrees on decides.
+5. **Rescue.** If nothing is read, the region is tried smoothed, with contrast
+   raised, and enlarged. That is what reads grey-on-grey print under heavy
+   sensor noise, where the detector alone sees only grain.
 
-**Why it exists.** A gradient detector cannot tell a line of print from a
-barcode -- both are dense clusters of short vertical edges -- and the
-hand-written discriminator measured on a real label had overlapping
-distributions for the two classes, so it could not be tuned. A network learns
-the boundary, provided barcodes appear in the training data labelled as
-not-text. They do: `textnet_data.py` renders labels on brushed metal with
-barcodes, screw heads, panel seams, ventilation slots, glare and rotations,
-every one of them because something in the real photographs was mistaken for
-text.
+Settings (all optional):
 
-Measured on a real chassis label, against ground truth:
+| Setting | Meaning |
+|---|---|
+| Must contain (Read text) | Text that must appear somewhere. Case and spaces are ignored. |
+| Exact text / Or a pattern (Verify text) | The marking must match - as the whole region or as any one of its lines, so a serial number is verified inside a full label. |
+| Ignore lines read with confidence below | Default 0.50. A line read with less is shown in amber and named in the message, not silently dropped. |
+| Allowed characters | Empty = keep everything. With capitals only, small letters are read as capitals. |
+| Print size | auto; fine = always look at twice the size (slower); fast = one pass. |
+| Script | latin (default) drops stray Chinese characters the recogniser sometimes reads into specks; any keeps them. |
 
-```
-  detector              boxes   text lines found   spurious (barcodes)
-  classical, gradient       6           4 of 4              2
-  trained network           3           4 of 4              0
-```
+Results: `text`, `lines`, and `blocks` - each line with its confidence and its
+box on the image - plus `engine`, which says what read it (`pp-ocr (gpu)`).
 
-Both find all the text. Only the network rejects the barcodes.
-
-Orientation is chosen once per region rather than per line. Per-line was tried
-and is worse: the upside-down reading of a single line is often longer and no
-less confident than the correct one, so nothing local separates them. Summed
-across a whole label the difference is unambiguous, and on the real label the
-tool selects 180 degrees by itself.
-
-**The limit is still recognition, not detection.** All four fields come through
-recognisable -- `WHO2d08L200sysve3` for `NX40-24Q8L2DD-SYS V03` -- which
-confirms a label is present and roughly right but will not capture a serial
-exactly. Install PaddleOCR for that; the detector feeds it just as well.
-
-## Find and read all text
-
-**Tools -> Text and codes -> Find and read all text.** Draw a loose region over
-a label and it locates each line of print inside and reads them separately,
-rather than needing one box per field.
-
-It exists because the single-box tools could not do this job. Handed a real
-network-switch chassis label carrying four fields, `Read text` returned `':'` -- it was
-being asked to read a whole multi-field label as one line.
-
-Detection works on the morphological gradient, not on brightness. Thresholding
-by brightness cannot separate printing from its surroundings on a metal
-chassis: the dark metal around a label and the dark ink on it come out the
-same, and the first attempt returned a single block covering the whole region.
-Edge density does separate them.
-
-Blocks are filtered by **length, not confidence**. On that same real label
-Tesseract's confidence ran backwards: the barcode rows it misread as "LAWN" and
-"VAM" scored 0.38 and 0.36, while the two rows it read substantially correctly
-scored 0.14 and 0.00. Filtering on confidence therefore threw away precisely
-the results worth keeping.
-
-**Honest limits, measured on a real label:** finding the text works -- all six
-blocks located, and the 180-degree orientation detected correctly. Reading it
-is only about 80% character-accurate with Tesseract: `NX40-24Q8L2DD-SYS V03`
-came back as `NS40-2408L200-SYSV03`. Good enough to confirm a label is present
-and roughly right, not good enough to capture a serial number exactly. For that
-install PaddleOCR, which is far stronger on small industrial print:
+**Where it runs.** The networks are ONNX files in `models/ocr`, run by
+onnxruntime: on the GPU with the `onnxruntime-directml` build (any DirectX 12
+GPU) or `onnxruntime-gpu`, on the CPU otherwise. Measured on an RTX 5060, on a
+real board: a label region 0.1-0.5 s; the whole 20-megapixel image, 1,075
+lines, about 10 s. Fetch the models with
 
 ```
-pip install paddleocr paddlepaddle
+python scripts/get_ocr_models.py            # full-size PP-OCRv6 (about 145 MB)
+python scripts/get_ocr_models.py --small    # the small ones (about 31 MB)
 ```
 
-Check which engine is actually live with **Help -> Check installation**. That
-now asks the text tool rather than guessing from what imports, because
-PaddleOCR downloads its models on first use: on a machine with no route to its
-model host it imports, looks available, and then quietly falls back to
-Tesseract.
+The reader uses the best set present (`det_medium`/`rec_medium` before
+`det_small`/`rec_small`). An exported package carries the models with it, so a
+line PC needs only onnxruntime - no PaddleOCR. Without the files, PaddleOCR is
+used on the CPU if it is installed.
 
-## Text at any angle
+**Install exactly one onnxruntime build.** `onnxruntime`, `onnxruntime-directml`
+and `onnxruntime-gpu` all provide the same module; installing the plain one
+after a GPU one silently replaces it and everything runs on the CPU.
+`python scripts/preflight.py` prints the GPU runtime in use and which reader will run.
 
-`Read text` and `Verify text` estimate the baseline angle of the marking,
-correct it, then try the four right-angle orientations and keep whichever reads
-best. Plain OCR collapses past about five degrees:
+## Trained surface check: the deep model  (2026-11-16)
 
-```
-  rotation    before          after
-      5 deg   AB12345X        AB12345X
-     12 deg   (nothing)       readable
-     25 deg   (nothing)       readable
-     45 deg   "A"             readable
-     90 deg   (nothing)       readable
-    180 deg   XSPCCLEV        readable
-```
+**Model** on the Trained surface check chooses what Train builds:
 
-Deskew fixes the baseline but cannot tell upright text from upside-down, since
-both have a horizontal baseline -- hence the quarter turns. Orientation scoring
-is additive rather than multiplicative: Tesseract reports zero confidence on a
-noisy crop, and a multiplicative score collapses to zero for every orientation,
-so length never broke the tie and a garbage upside-down read beat a correct
-upright one. Switch either behaviour off in the tool settings.
+- **deep** - a pretrained network (ResNet-18) describes the region as a grid of
+  feature vectors; training stores those seen on good parts, and a new part is
+  scored by how far its features are from anything in that store (the PatchCore
+  method). It copes with grain, texture and lighting that differ from part to
+  part, and needs no defect examples.
+- **statistical** - the per-pixel model: exact for parts that repeat to the
+  pixel.
+- **auto** - deep when `models/backbone/resnet18_features.onnx` is present
+  (`python scripts/make_backbone.py` builds it) and there are at least four OK images;
+  statistical otherwise. From one or two photographs the deep model has no
+  way to know how good parts vary, and rejected the next good one.
+
+With OK and NG images the deep model's threshold is the split that puts the
+fewest on the wrong side; an OK image that lands above it is reported as odd
+rather than allowed to raise the threshold past every bad part. Measured
+leave-one-out on a nine-side product's photographs (54 OK, 44 NG), surface
+check alone: statistical (resolution 1600, lighting flattened) 48/54 OK
+passed and 43/44 NG rejected; deep (resolution 640, nothing tuned) 49/54 and
+44/44, at 0.2-0.6 s a part on the GPU. The job's existing models are the
+statistical ones and keep working; retrain a side to move it to the deep model.
+
+Retrain after changing Model or Model resolution. *Deep model: threshold
+scale* moves the trained threshold without retraining (below 1 = stricter).
+
+## Detect with YOLO: one tool
+
+"Find defects with YOLO" was a second tool differing in one line. Tick
+**Reject the part when anything is found** on Detect with YOLO for a model
+trained on defects. End-to-end exports (YOLOv10, YOLO26) are decoded as well
+as YOLOv8/v11. A check with no model yet says so, and where to put one.
 
 ## Multiple captures per inspection
 
@@ -1691,7 +1890,7 @@ fraction of a percent over the LEDs, shorten the exposure until it is not.
 
 ## Colour: stock settings rejected good LEDs
 
-`python bench_defaults.py` builds every tool from `schema.defaults()` exactly as
+`python benchmarks/bench_defaults.py` builds every tool from `schema.defaults()` exactly as
 the *Add tool* menu does, and runs it against a good part. Anything that cannot
 pass with stock settings is a tool nobody can use out of the box.
 
@@ -1716,8 +1915,9 @@ white and "off" differ only in lightness.
 
 ## OCR: two bugs fixed, accuracy 9x better
 
-`python bench_ocr.py` measures character error rate across eight degradations
-that mirror real marking: small text, low contrast, defocus, sensor noise,
+*History: this describes the earlier reader, replaced on 2026-11-16 - see
+"Reading text". `bench_ocr.py` was removed with it.* It measured character
+error rate across eight degradations that mirror real marking: small text, low contrast, defocus, sensor noise,
 glare, rotation and dot-matrix printing.
 
 ```
@@ -1764,9 +1964,9 @@ declared working -- the other tools got the same treatment: synthetic scenes
 with exactly known ground truth, measure the error, then mutation-test the tests.
 
 ```
-python bench_measure.py     measurement and calibration
-python bench_tools.py       counting, colour, defect, presence
-python bench_align.py       alignment
+python benchmarks/bench_measure.py     measurement and calibration
+python benchmarks/bench_tools.py       counting, colour, defect, presence
+python benchmarks/bench_align.py       alignment
 ```
 
 Results, all against exact ground truth:
@@ -1829,7 +2029,7 @@ Also added: coarse-to-fine angle search on an image pyramid, subpixel peak
 interpolation, and an ECC polish that is accepted only if it measurably improves
 the match.
 
-`python bench_align.py` reproduces the table.
+`python benchmarks/bench_align.py` reproduces the table.
 
 ## Tests
 
@@ -2005,11 +2205,10 @@ tests.py     integration test suite (python -m pytest tests.py)
 bench_align.py  alignment accuracy benchmark against known transforms
 bench_measure.py  measurement and calibration accuracy audit
 bench_tools.py  counting, colour, defect and presence accuracy audit
-bench_ocr.py  OCR character error rate across eight degradations
 bench_defaults.py  every tool built the way the UI builds it
-textnet_data.py  synthetic training data for the text detector
-textnet_train.py  trains the detector and exports it to ONNX
-models/textnet.onnx  the trained detector, 41 kB
+get_ocr_models.py  fetches the text reader's networks into models/ocr
+make_backbone.py  builds the deep surface model's network
+models/ocr  the text reader's networks (PP-OCRv6, ONNX)
 inference.py  OpenVINO / onnxruntime backend shared by every model tool
 job.py  jobs, sides and per-tool OK/NG training sets
 vstools/geometry.py  Find Line, Find Circle, Histogram, Distance / angle

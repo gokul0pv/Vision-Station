@@ -8,14 +8,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python app.py
+python -m vision_station --classic
 if errorlevel 1 (
     echo.
     echo  ========================================================
     echo  The application exited with an error. Checking the
     echo  installation to see whether something is missing...
     echo.
-    python preflight.py
+    python scripts\preflight.py
     echo.
     pause
 )
