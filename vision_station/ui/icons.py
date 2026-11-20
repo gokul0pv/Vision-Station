@@ -1,4 +1,11 @@
-"""Vision Station's icons: an original set of modern line icons.
+"""Vision Station's icons.
+
+The Phosphor icon set (MIT licence, phosphoricons.com) through QtAwesome
+(MIT licence) when it is installed -- one consistent, current family of line
+icons for every action and tool. The original drawn set below is the
+fallback, so the application never depends on it.
+
+The drawn set: an original set of modern line icons.
 
 Drawn as SVG on a 24-unit grid -- 1.7-unit rounded strokes, a neutral ink,
 and a category accent -- so they stay crisp at any size and on high-DPI
@@ -9,6 +16,8 @@ since Cognex's icons are their copyright.
     icon("run")                    an action icon
     tool_icon("find_circle")       a tool type's icon, in its family's colour
 """
+import os
+
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 
@@ -118,6 +127,9 @@ ACTIONS = {
                '<circle cx="16" cy="7" r="2" ' + _A + '/><circle cx="10" cy="17" r="2" ' + _A + '/>',
     "network": '<rect x="9" y="3.5" width="6" height="5" rx="1" ' + _S + '/><rect x="3.5" y="15.5" width="6" height="5" rx="1" ' + _S + '/>'
                '<rect x="14.5" y="15.5" width="6" height="5" rx="1" ' + _S + '/><path d="M12 8.5v3.5M6.5 15.5V12h11v3.5" ' + _A + '/>',
+    "barcode": '<path d="M3.5 7V5.5a1 1 0 0 1 1-1H6M18 4.5h1.5a1 1 0 0 1 1 1V7M20.5 17v1.5a1 1 0 0 1-1 1H18M6 19.5H4.5a1 1 0 0 1-1-1V17" ' + _S + '/>'
+               '<path d="M7 8v8M10 8v8M13.5 8v8M17 8v8" fill="none" stroke="{a}" stroke-width="1.7" stroke-linecap="round"/>'
+               '<path d="M11.7 8v8M15.3 8v8" fill="none" stroke="{a}" stroke-width=".9" stroke-linecap="round"/>',
     "photo": '<rect x="3.5" y="5" width="17" height="14" rx="2" ' + _S + '/>'
              '<path d="m3.5 16 4.5-4.5 4 4 3-3 5.5 5.5" ' + _S + '/><circle cx="15.5" cy="9" r="1.5" ' + _F + '/>',
     "sparkle": '<path d="M11 3.5c.6 4 2.5 5.9 6.5 6.5-4 .6-5.9 2.5-6.5 6.5-.6-4-2.5-5.9-6.5-6.5 4-.6 5.9-2.5 6.5-6.5z" ' + _A + '/>'
@@ -177,6 +189,90 @@ APP = ('<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#1F6FB2"/>'
 
 _cache = {}
 
+# ------------------------------------------------------------ Phosphor
+# action -> (Phosphor name, coloured with the accent rather than the ink)
+PHOSPHOR = {
+    "run": ("play-fill", True), "run_continuous": ("repeat", True), "stop": ("stop-fill", True),
+    "open": ("folder-open", False), "save": ("floppy-disk", False), "export": ("export", False),
+    "import": ("download-simple", False), "python": ("code", False),
+    "reset": ("arrow-counter-clockwise", False), "toolbox": ("briefcase", False),
+    "image_source": ("camera", False), "electric": ("lightning", True),
+    "floating": ("app-window", False), "grid_results": ("table", False),
+    "help": ("question", False), "pointer": ("cursor", False), "pan": ("hand", False),
+    "zoom_in": ("magnifying-glass-plus", False), "zoom_out": ("magnifying-glass-minus", False),
+    "fit": ("corners-out", False), "actual": ("frame-corners", False),
+    "grid": ("grid-four", False), "graphics": ("selection", False),
+    "guides": ("crosshair", False), "exposure": ("aperture", False),
+    "history": ("clock-counter-clockwise", False), "tag": ("tag", False),
+    "rect": ("rectangle", False), "ellipse": ("circle", False), "polygon": ("polygon", False),
+    "build": ("wrench", False), "layout": ("layout", False), "output": ("image-square", False),
+    "train": ("graduation-cap", False), "test": ("flask", False), "add": ("plus", False),
+    "delete": ("trash", False), "close": ("x", False), "rename": ("pencil-simple", False),
+    "up": ("caret-up", False), "down": ("caret-down", False), "cascade": ("stack", False),
+    "tile": ("squares-four", False), "counts": ("hash", False), "job": ("clipboard-text", False),
+    "align_left": ("align-left", False), "align_hcenter": ("align-center-horizontal", False),
+    "align_right": ("align-right", False), "align_top": ("align-top", False),
+    "align_vcenter": ("align-center-vertical", False), "align_bottom": ("align-bottom", False),
+    "distribute_h": ("columns", False), "distribute_v": ("rows", False),
+    "match_width": ("arrows-out-line-horizontal", False),
+    "match_height": ("arrows-out-line-vertical", False),
+    "rotate_cw": ("arrow-clockwise", False), "rotate_ccw": ("arrow-counter-clockwise", False),
+    "rotate_zero": ("arrow-u-up-left", False), "lock": ("lock-simple", False),
+    "unlock": ("lock-simple-open", False), "duplicate": ("copy", False),
+    "zoom_selection": ("magnifying-glass", False), "gear": ("gear-six", False),
+    "more": ("dots-three", False), "sliders": ("sliders-horizontal", False),
+    "network": ("wifi-high", False), "barcode": ("barcode", False), "photo": ("image", False),
+    "sparkle": ("sparkle", True), "image_process": ("magic-wand", False),
+    "find_picture": ("magnifying-glass", False), "light": ("lightbulb", False),
+}
+# tool type -> Phosphor name; drawn in its family's colour
+PHOSPHOR_TOOLS = {
+    "image_process": "magic-wand", "align": "crosshair", "calibrate_scale": "ruler",
+    "presence": "check-square-offset", "count_template": "circles-four",
+    "count_blob": "circles-three", "color_match": "palette", "color_classify": "lightbulb",
+    "led_glow": "lightbulb-filament", "find_line": "line-segment", "find_circle": "circle-dashed",
+    "caliper": "arrows-left-right", "fit_shape": "pen-nib", "intersect": "intersect",
+    "distance": "ruler", "trained_surface": "brain", "defect_diff": "magnifying-glass",
+    "anomaly": "warning-octagon", "histogram": "chart-bar", "yolo_detect": "robot",
+    "yolo_defect": "robot", "text_detect": "text-t", "ocr_auto": "text-t", "ocr": "text-t",
+    "ocv": "text-aa", "code_read": "barcode", "find_ellipse": "circle-half",
+    "sharpness": "aperture", "color_segment": "paint-bucket", "classify": "tag",
+    "affine_transform": "arrows-out", "polar_unwrap": "arrows-clockwise",
+    "image_combine": "intersect", "fixture_npoint": "map-pin", "calibrate_npoint": "grid-four",
+    "construct": "compass", "bead": "path", "data_analysis": "calculator",
+    "results_analysis": "list-numbers", "measure_length": "ruler",
+}
+_qta = None
+
+
+def _phosphor():
+    """QtAwesome, or None when it is not installed (or VS_ICONS=drawn)."""
+    global _qta
+    if _qta is None:
+        _qta = False
+        if os.environ.get("VS_ICONS", "").lower() != "drawn":
+            try:
+                os.environ.setdefault("QT_API", "pyside6")
+                import qtawesome
+                qtawesome.icon("ph.cursor")          # its font loads, or this fails
+                _qta = qtawesome
+            except Exception:
+                _qta = False
+    return _qta or None
+
+
+def _ph_icon(name, colour, on=None):
+    qta = _phosphor()
+    if qta is None:
+        return None
+    try:
+        opts = {"color": colour, "color_active": colour, "color_disabled": "#A0A4AA"}
+        if on is not None:
+            opts.update(color_on=on, color_on_active=on)
+        return qta.icon("ph." + name, **opts)
+    except Exception:
+        return None
+
 
 def _svg(body, ink, accent):
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">%s</svg>'
@@ -219,12 +315,17 @@ def icon(name, ink=None, accent=None, on=None):
     """An action icon. Unknown names give an empty icon, never an error.
     on: the ink for the checked state -- white for a button that turns solid
     accent when checked, where the normal ink would be lost on the blue."""
-    if name not in ACTIONS:
+    if name not in ACTIONS and name not in PHOSPHOR:
         return QIcon()
     ink = ink or INK
     acc = accent or {"run": ACCENTS["run"], "run_continuous": ACCENTS["run"],
                      "stop": ACCENTS["stop"], "electric": ACCENTS["warn"]}.get(name, ACTION_ACCENT)
     key = ("a", name, ink, acc, on)
+    if key not in _cache and name in PHOSPHOR:
+        ph, accented = PHOSPHOR[name]
+        ic = _ph_icon(ph, acc if accented else ink, on)
+        if ic is not None:
+            _cache[key] = ic
     if key not in _cache:
         if on is None:
             _cache[key] = _render(_svg(ACTIONS[name], ink, acc))
@@ -239,6 +340,10 @@ def tool_icon(tool_type, ink=None):
     """A tool type's icon in its family's accent colour."""
     family, body = TOOLS.get(tool_type, ("logic", '<rect x="5" y="5" width="14" height="14" rx="3" ' + _A + '/>'))
     key = ("t", tool_type, ink)
+    if key not in _cache and tool_type in PHOSPHOR_TOOLS:
+        ic = _ph_icon(PHOSPHOR_TOOLS[tool_type], ACCENTS[family])
+        if ic is not None:
+            _cache[key] = ic
     if key not in _cache:
         _cache[key] = _render(_svg(body, ink, ACCENTS[family]))
     return _cache[key]

@@ -60,6 +60,10 @@ _LOCK = threading.Lock()
 
 # ------------------------------------------------------------------ models
 def _first(names):
+    if os.environ.get("VS_DEVICE", "").strip().upper() == "CPU":
+        # on the processor the smallest models first: the larger ones are
+        # worth their time only on a graphics card (core/system_profile.py)
+        names = tuple(reversed(names))
     for n in names:
         p = os.path.join(MODEL_DIR, n)
         if os.path.exists(p):
@@ -371,6 +375,10 @@ def _rec_blob(crops, width):
 
 
 def _decode(probs, chars):
+    """(text, mean confidence, confidence of each character). Each
+    character's own confidence is kept so that junk at the ends of a line --
+    the edge of a neighbouring part read as 'P' in 'PR15' -- can be told from
+    the print and trimmed (see _trim_junk)."""
     idx = probs.argmax(axis=1)
     mx = probs.max(axis=1)
     text, confs, prev = [], [], 0
@@ -379,14 +387,15 @@ def _decode(probs, chars):
             text.append(chars[i])
             confs.append(float(v))
         prev = i
-    return "".join(text), (float(np.mean(confs)) if confs else 0.0)
+    return "".join(text), (float(np.mean(confs)) if confs else 0.0), confs
 
 
 def _recognise(m, chars, crops):
-    """[(text, confidence)] in the order given. Lines are batched by shape so
-    a long line does not make forty short ones pay for its width, and widths
-    come in steps so the GPU sees a few input shapes, not hundreds."""
-    out = [("", 0.0)] * len(crops)
+    """[(text, confidence, per-character confidences)] in the order given.
+    Lines are batched by shape so a long line does not make forty short ones
+    pay for its width, and widths come in steps so the GPU sees a few input
+    shapes, not hundreds."""
+    out = [("", 0.0, [])] * len(crops)
     order = sorted(range(len(crops)),
                    key=lambda i: crops[i].shape[1] / float(crops[i].shape[0]))
     for s in range(0, len(order), REC_BATCH):
@@ -421,6 +430,14 @@ def _upside_down(m, crops):
         p = m["cls"](x)[0]
         flags.extend(bool(v[1] > v[0]) for v in p)
     return flags
+
+
+def _strip_confs(text, confs):
+    """The per-character confidences of text.strip(): the characters stripped
+    from the ends take their confidences with them."""
+    lead = len(text) - len(text.lstrip())
+    n = len(text.strip())
+    return list(confs[lead:lead + n])
 
 
 def _score(text, conf):
@@ -465,8 +482,8 @@ def _read_lines(m, chars, img, boxes, both_ways=True):
             owner.append((i, k))
     read = _recognise(m, chars, jobs)
     cands = [[] for _ in crops]
-    for (i, k), (t, c) in zip(owner, read):
-        cands[i].append((k, t.strip(), c, _score(t.strip(), c)))
+    for (i, k), (t, c, cc) in zip(owner, read):
+        cands[i].append((k, t.strip(), c, _score(t.strip(), c), _strip_confs(t, cc)))
 
     # the way up most of the print agrees on, weighted by how decisive and
     # how long each line is
@@ -487,11 +504,12 @@ def _read_lines(m, chars, img, boxes, both_ways=True):
             same = next((v for v in cs if v[0] == common), None)
             if same is not None and same[1] and same[3] >= best[3] - 0.15:
                 best = same
-        k, t, c, _sc = best
+        k, t, c, _sc, cc = best
         if not t or looks_like_a_pattern(t):
             continue
         x0, y0, x1, y1 = _rect(box)
         out.append({"text": t, "confidence": round(float(c), 4),
+                    "char_conf": [round(float(v), 4) for v in cc],
                     "poly": [[float(px), float(py)] for px, py in box],
                     "box": [int(x0), int(y0), int(round(x1 - x0)), int(round(y1 - y0))],
                     "turn": int(k) * 90, "upside_down": k == 2,
@@ -508,6 +526,82 @@ def looks_like_a_pattern(text):
         return False
     top = max(set(t), key=t.count)
     return top.isalpha() and t.count(top) >= 0.6 * len(t)
+
+
+# ------------------------------------------------------- repeatable results
+# A region drawn round a small marking also holds the edge of a pad, the
+# corner of the next part or a solder fillet. The reader sees those as print,
+# and whether it does changes from one camera frame to the next with sensor
+# noise and a fraction of a pixel of movement. Measured on a real board
+# (41 text checks, 12 frames of one unmoved part with camera-level noise):
+#
+#   genuine lines   confidence >= 0.96, the tallest line in the region
+#   stray lines     median confidence 0.31, median 0.27 of the main line's height
+#   stray letters   joined onto real print ('PR15', 'R15 D'): 0.4 - 0.8 against
+#                   >= 0.97 for the print beside them
+#
+# So one part gave 'R15' on one run and 'PR15' or '451 A' on the next. Stray
+# lines are dropped (clean_lines); stray letters are offered as a second
+# reading for verification, never removed from what was read (core_text).
+FRAGMENT_MAX_CHARS = 2       # a stray mark reads as one or two characters
+FRAGMENT_REL_HEIGHT = 0.5    # ... and is under half the height of the print
+TRIM_BELOW = 0.85            # an end character read less surely than this ...
+TRIM_CORE_ABOVE = 0.95       # ... beside print read at least this surely
+TRIM_MAX = 2                 # at most this many from each end
+
+
+def _thickness(line):
+    b = line.get("box") or [0, 0, 0, 0]
+    return float(min(b[2], b[3]))
+
+
+def core_text(line):
+    """The line without the characters that are probably stray marks, or
+    None when there are none: unsure punctuation anywhere (a glint read as
+    an apostrophe in "Ri'5"), and up to TRIM_MAX unsure characters at either
+    end, provided what is left was read at TRIM_CORE_ABOVE or better.
+
+    A *second* reading, never a replacement. Confidence cannot tell a
+    stray 'P' beside R15 from a faintly printed first letter -- trimming
+    in place turned 451 into 51 on one frame in twenty. Verifying against an
+    expected text tries both, so a good part matches either way and a wrong
+    marking (R10 for R15) matches neither."""
+    text, cc = line.get("text", ""), list(line.get("char_conf") or [])
+    if len(cc) != len(text) or len(text) < 3:
+        return None
+    keep = [(ch, c) for ch, c in zip(text, cc)
+            if ch.isalnum() or ch == " " or c >= TRIM_BELOW]
+    lo, hi, n = 0, len(keep), 0
+    while n < TRIM_MAX and hi - lo > 2 and (keep[lo][1] < TRIM_BELOW or keep[lo][0] == " "):
+        n += keep[lo][0] != " "
+        lo += 1
+    n = 0
+    while n < TRIM_MAX and hi - lo > 2 and (keep[hi - 1][1] < TRIM_BELOW or keep[hi - 1][0] == " "):
+        n += keep[hi - 1][0] != " "
+        hi -= 1
+    core = keep[lo:hi]
+    sure = [c for ch, c in core if ch != " "]
+    out = "".join(ch for ch, _c in core).strip()
+    if not sure or min(sure) < TRIM_CORE_ABOVE or out == text.strip():
+        return None
+    return out
+
+
+def clean_lines(lines):
+    """Lines with stray marks removed, for results that repeat run after run:
+    fragments -- one or two characters, under half the height of the
+    region's main print -- dropped, and each line given its `core` reading
+    (core_text) for verification. The main print is the most confidently
+    read line of three or more characters; with none, nothing is dropped."""
+    lines = [dict(l, core=core_text(l)) if core_text(l) else l for l in lines]
+    main = [l for l in lines if len(l["text"].replace(" ", "")) >= 3]
+    if not main:
+        return lines
+    ref = max(main, key=lambda l: l["confidence"])
+    tall = _thickness(ref)
+    return [l for l in lines
+            if l is ref or len(l["text"].replace(" ", "")) > FRAGMENT_MAX_CHARS
+            or _thickness(l) >= FRAGMENT_REL_HEIGHT * tall]
 
 
 def _reading_order(lines):

@@ -265,14 +265,23 @@ def main():
             print("     %s" % INSTALL[name])
         return 2
     if problems:
-        print("  The application will run. These are optional:")
-        for r in problems:
-            print("     %-12s %s" % (r["name"], r["fix"]))
-            print("     %-12s -> without it: %s" % ("", r["why"]))
+        from vision_station import paths
+        if paths.FROZEN:
+            # the packaged application carries what it uses; the rest are
+            # engines for a Python installation, not something to pip install here
+            print("  The application will run. Not part of this package (optional): %s"
+                  % ", ".join(r["name"] for r in problems))
+        else:
+            print("  The application will run. These are optional:")
+            for r in problems:
+                print("     %-12s %s" % (r["name"], r["fix"]))
+                print("     %-12s -> without it: %s" % ("", r["why"]))
     else:
         print("  Everything is installed.")
     print()
-    print("  Start with:  run.bat   (or: python -m vision_station)")
+    from vision_station import paths
+    print("  Start with:  %s" % ("VisionStation.exe" if paths.FROZEN
+                                 else "run.bat   (or: python -m vision_station)"))
     return 0
 
 

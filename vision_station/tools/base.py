@@ -40,6 +40,7 @@ class ToolResult:
     graphics: List[Graphic] = field(default_factory=list)
     message: str = ""
     ms: float = 0.0
+    caption: List[str] = field(default_factory=list)   # the result in words, for the picture
 
     def to_dict(self):
         return {
@@ -48,6 +49,7 @@ class ToolResult:
             "graphics": [{k: v for k, v in g.__dict__.items() if k != "absolute"}
                          for g in self.graphics],
             "message": self.message, "ms": round(self.ms, 2),
+            "caption": list(self.caption),
         }
 
 

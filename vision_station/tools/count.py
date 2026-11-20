@@ -22,7 +22,7 @@ class CountTemplate(Tool):
                               message="set Sample region: x, y, w, h of one example to count, "
                                       "on the reference image")
         tx, ty, tw, th = tr
-        tpl = _gray(ctx.reference)[ty:ty + th, tx:tx + tw]
+        tpl = _gray(ctx.reference[ty:ty + th, tx:tx + tw])
         search, (ox, oy) = self.crop(image, ctx)
         sg = _gray(search)
         if sg.shape[0] < th or sg.shape[1] < tw:
@@ -110,16 +110,165 @@ class CountBlob(Tool):
                           (time.perf_counter() - t0) * 1000)
 
 
+# ---------------------------------------------------------------- examples
+# A check's OK and NG pictures from its Train tab, as the patch each holds
+# where the check's region lies -- read once, kept while the files and the
+# region stay the same.
+_EXAMPLES = {}
+# One decoded copy of each example picture, shared by every check while it is
+# read. Advanced training adds the same 8 pictures to all of a job's checks
+# (hard links): read per check, 233 checks decoded 1,864 twenty-megapixel
+# files -- minutes -- on the first run.
+_PICTURES = {}
+# more than the pictures a check has: with fewer, each check threw out the
+# picture the next one needed first -- 16 pictures, 141 checks, every picture
+# decoded by every check (minutes). Let go after each run (release_pictures).
+_PICTURES_MAX = 40
+EXAMPLES_MAX = 4000         # entries; each a small patch and a thumbnail
+
+
+def _picture(path):
+    """(image, thumbnail) of an example picture, decoded once for every
+    check that has it -- the same file under several names (a hard link)
+    too."""
+    import os
+    from vision_station.core import imio
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, None
+    key = (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size) if st.st_ino else         (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    hit = _PICTURES.get(key)
+    if hit is not None:
+        return hit
+    img = imio.imread(path)
+    got = (img, None if img is None else thumb(img))
+    if len(_PICTURES) >= _PICTURES_MAX:
+        _PICTURES.pop(next(iter(_PICTURES)))
+    _PICTURES[key] = got
+    return got
+
+
+def release_pictures():
+    """The decoded pictures let go (after a run): the patches stay cached."""
+    _PICTURES.clear()
+# How much closer to an NG example than to every good one a part must be to
+# be rejected for it. An NG example that is in fact a good part is as like
+# every good board as the reference is; this keeps the boards it was not
+# taken from passing.
+NG_MARGIN = 0.03
+# The very picture an NG example was made from (or a still re-shot of it):
+# mean grey difference of the two whole pictures shrunk to THUMB, in grey
+# levels. Labelled NG, that picture is NG -- whatever it looks like.
+SAME_PICTURE_GREY = 1.0
+THUMB = (64, 48)
+SAME_PATCH_SHARE = 0.01     # of its pixels may differ by more than 30 grey levels
+# ... and the check's own region in it, unshrunk, nearly pixel for pixel: a
+# board with only this part missing is the same picture shrunk to 64 x 48
+# (0.06 grey levels), but 5-40 % of the region's pixels differ by more than
+# 30 levels; a still re-shot or a 0.4 px shift of the same part, under 0.1 %.
+
+
+def thumb(image):
+    return cv2.resize(_gray(image), THUMB, interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def _patch_sim(a, b):
+    """Normalised correlation of two same-sized grey patches (1 = identical)."""
+    if a.shape != b.shape or a.size == 0:
+        return 0.0
+    if float(a.std()) < 1e-6 or float(b.std()) < 1e-6:
+        d = float(np.sqrt(np.mean((a.astype(np.float32) - b.astype(np.float32)) ** 2)))
+        return max(0.0, 1.0 - d / 64.0)
+    return float(cv2.matchTemplate(a, b, cv2.TM_CCOEFF_NORMED)[0, 0])
+
+
+def _best_sim(win, patch):
+    """(similarity, region): where in the search window the patch fits best,
+    and how well -- normalised correlation, or for a plain patch the RMS
+    difference as Part present scores a plain region."""
+    ph, pw = patch.shape[:2]
+    if win.shape[0] < ph or win.shape[1] < pw or patch.size == 0:
+        return 0.0, None
+    if float(patch.std()) < 4.0:
+        r = cv2.matchTemplate(win, patch, cv2.TM_SQDIFF)
+        mn, _, loc, _ = cv2.minMaxLoc(r)
+        sim = max(0.0, 1.0 - float(np.sqrt(max(0.0, mn) / float(pw * ph))) / 64.0)
+    else:
+        r = cv2.matchTemplate(win, patch, cv2.TM_CCOEFF_NORMED)
+        _, sim, _, loc = cv2.minMaxLoc(r)
+    return float(sim), win[loc[1]:loc[1] + ph, loc[0]:loc[0] + pw]
+
+
+def training_examples(folder, tool_id, roi, tpl):
+    """[(label, path, patch)] -- each OK / NG training picture's patch for
+    this region, found where the region's reference content is in it (a
+    picture of a board lying a little differently still lines up)."""
+    import glob
+    import os
+    if not folder:
+        return []
+    base = os.path.join(folder, "training", tool_id)
+    files = []
+    for label in ("ok", "ng"):
+        for f in sorted(glob.glob(os.path.join(base, label, "*"))):
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")):
+                try:
+                    files.append((label, f, os.path.getmtime(f)))
+                except OSError:
+                    pass
+    if not files:
+        return []
+    key = (base, tuple(roi), tpl.shape, tuple(files))
+    hit = _EXAMPLES.get(key)
+    if hit is not None:
+        return hit
+    x, y, w, h = roi
+    th, tw = tpl.shape[:2]
+    margin = int(max(30, 0.5 * max(w, h)))
+    out = []
+    for label, f, _m in files:
+        img, th_img = _picture(f)
+        if img is None:
+            continue
+        H, W = img.shape[:2]
+        x0, y0 = max(0, x - margin), max(0, y - margin)
+        x1, y1 = min(W, x + w + margin), min(H, y + h + margin)
+        win = _gray(img[y0:y1, x0:x1])
+        if win.shape[0] < th or win.shape[1] < tw:
+            continue
+        method = cv2.TM_CCOEFF_NORMED if float(tpl.std()) >= 1e-6 else cv2.TM_SQDIFF
+        r = cv2.matchTemplate(win, tpl, method)
+        mn, mx, mnl, mxl = cv2.minMaxLoc(r)
+        lx, ly = mnl if method == cv2.TM_SQDIFF else mxl
+        if method != cv2.TM_SQDIFF and mx < 0.5:
+            # nothing like the reference's part here (it is missing, or a
+            # variant): the example is what sits where the part belongs
+            lx, ly = x - x0, y - y0
+            lx = max(0, min(win.shape[1] - tw, lx))
+            ly = max(0, min(win.shape[0] - th, ly))
+        out.append((label, f, win[ly:ly + th, lx:lx + tw].copy(), th_img))
+    if len(_EXAMPLES) > EXAMPLES_MAX:
+        _EXAMPLES.clear()
+    _EXAMPLES[key] = out
+    return out
+
+
 @register("presence")
 class Presence(Tool):
-    """Is the thing there at all? Correlation against the same ROI in the reference."""
+    """Is the thing there at all? Correlation against the same ROI in the
+    reference -- and against the check's own OK and NG examples, when its
+    Train tab has any: a part that looks more like an NG example than like
+    any good one is rejected, one that matches an OK example is accepted."""
 
     def run(self, image, ctx):
         t0 = time.perf_counter()
         if ctx.reference is None or self.roi is None:
             return ToolResult(self.id, self.type_name, "error", message="roi and reference required")
         x, y, w, h = self.roi
-        tpl = _gray(ctx.reference)[y:y + h, x:x + w]
+        # the region alone made grey: the whole 20-megapixel reference was
+        # converted for every check, 2-3 ms each, every cycle
+        tpl = _gray(ctx.reference[max(0, y):y + h, max(0, x):x + w])
         pad = int(self.p.get("search_pad", 15))
         self.roi = [x - pad, y - pad, w + 2 * pad, h + 2 * pad]
         crop, (ox, oy) = self.crop(image, ctx)
@@ -148,10 +297,83 @@ class Presence(Tool):
             mode = "pattern"
         thr = float(self.p.get("min_score", 0.65))
         ok = mx >= thr
-        g = [Graphic("rect", [(loc[0] + ox, loc[1] + oy), (loc[0] + ox + w, loc[1] + oy + h)],
-                     "pass" if ok else "fail", f"{self.id} {mx:.2f}")]
+        # The examples from the Train tab. They changed nothing before: a
+        # picture added under NG -- even the reference itself -- still
+        # passed, and "Test" reported it as an escape.
+        ok_best, ng_best, ng_path = float(mx), 0.0, ""
+        examples = training_examples(getattr(ctx, "folder", ""), self.id, [x, y, w, h], tpl)
+        same_ng = ""
+        if any(e[0] == "ng" for e in examples):
+            share = getattr(ctx, "share", None)
+            key = ("_thumb", id(image))
+            mine = share.get(key) if isinstance(share, dict) else None
+            if mine is None:
+                mine = thumb(image)
+                if isinstance(share, dict):
+                    share[key] = mine
+        # A part that already matches the reference, with no NG example to
+        # weigh it against, passes whatever its good examples say: they are
+        # not compared then. Advanced training gives every check 8 of them,
+        # and comparing all of them on every run cost 0.6 s on 233 checks.
+        has_ng = any(e[0] == "ng" for e in examples)
+        need_ok = not (mx >= thr and not has_ng)
+        for label, path, patch, th_ in examples:
+            if label == "ok" and not need_ok:
+                continue
+            # each example looked for in the search window, as the reference
+            # is: compared at the reference's best spot, a part unlike the
+            # reference was compared with whatever happened to be there
+            sim, region = _best_sim(cg, patch)
+            if label == "ok":
+                ok_best = max(ok_best, sim)
+                continue
+            if sim > ng_best:
+                ng_best, ng_path = sim, path
+            if region is not None and th_.shape == mine.shape and \
+                    float(np.mean(np.abs(th_ - mine))) < SAME_PICTURE_GREY and \
+                    float(np.mean(np.abs(region.astype(np.int16) - patch.astype(np.int16))
+                                  > 30)) < SAME_PATCH_SHARE:
+                same_ng = path
+        why = "" if ok else f"match {mx:.2f} below {thr}"
+        if examples:
+            ok = ok_best >= thr
+            why = "" if ok else f"match {ok_best:.2f} below {thr}"
+            # An NG example wins over the good ones when the part is closer to
+            # it -- or is, in effect, that very picture: labelled NG, it is NG.
+            import os
+            if same_ng:
+                ok = False
+                why = "this is the picture of NG example %s" % \
+                    os.path.splitext(os.path.basename(same_ng))[0]
+            elif ng_best > ok_best + NG_MARGIN:
+                ok = False
+                why = "looks like NG example %s (%.2f) more than a good part (%.2f)" % (
+                    os.path.splitext(os.path.basename(ng_path))[0], ng_best, ok_best)
+            # the score: how good the part looks -- pulled down by an NG
+            # example it resembles, so "Tune threshold" counts it as bad
+            mx = min(ok_best, max(0.0, 1.0 - ng_best)) \
+                if (why.startswith("looks like") or same_ng) else ok_best
+        # The check's own outline -- box, rotated box, circle or polygon, as it
+        # was drawn -- moved to where the part was found. It was a plain box
+        # at the match, whatever shape the region had.
+        status = "pass" if ok else "fail"
+        g = []
+        try:
+            ex, ey = self.mapped_roi(ctx)[:2]
+            dx, dy = loc[0] + ox - ex, loc[1] + oy - ey
+            g = self.roi_graphic(ctx, status)
+            for gr in g:
+                gr.points = [(px + dx, py + dy) for px, py in gr.points]
+        except Exception:
+            g = []
+        if not g:
+            g = [Graphic("rect", [(loc[0] + ox, loc[1] + oy), (loc[0] + ox + w, loc[1] + oy + h)],
+                         status, "")]
+            g[0].role = "region"
+        vals = {"match": round(float(mx), 4), "mode": mode, "texture": round(texture, 1)}
+        if examples:
+            vals.update(good_match=round(ok_best, 4), ng_match=round(ng_best, 4),
+                        examples_ok=sum(1 for e in examples if e[0] == "ok"),
+                        examples_ng=sum(1 for e in examples if e[0] == "ng"))
         return ToolResult(self.id, self.type_name, "pass" if ok else "fail", float(mx),
-                          {"match": round(float(mx), 4), "mode": mode,
-                           "texture": round(texture, 1)}, g,
-                          "" if ok else f"match {mx:.2f} below {thr}",
-                          (time.perf_counter() - t0) * 1000)
+                          vals, g, why, (time.perf_counter() - t0) * 1000)

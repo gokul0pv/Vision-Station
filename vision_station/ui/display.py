@@ -59,8 +59,45 @@ def _sep(vertical=False):
     return s
 
 
+# What the record selector says for the pictures anyone looks at; the keys
+# (VisionPro's record names) stay what the code and saved layouts use.
+RECORD_LABELS = {"Reference": "Teach picture",
+                 "Current.InputImage": "Next picture",
+                 "LastRun.InputImage": "Last inspection"}
+
+
+class RecordBox(QComboBox):
+    """The record selector: shows plain names, works in record keys --
+    setCurrentText, currentText and the change signal all take the key."""
+    keyChanged = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.currentIndexChanged.connect(lambda _i: self.keyChanged.emit(self.currentText()))
+
+    def addItems(self, keys):
+        for k in keys:
+            self.addItem(RECORD_LABELS.get(k, k), k)
+
+    def currentText(self):
+        k = self.currentData()
+        return k if k is not None else super().currentText()
+
+    def setCurrentText(self, key):
+        i = self.findData(key)
+        if i < 0:
+            i = self.findText(key)
+        if i >= 0:
+            self.setCurrentIndex(i)
+
+    def itemText(self, i):
+        k = self.itemData(i)
+        return k if k is not None else super().itemText(i)
+
+
 class VisionDisplay(QWidget):
     recordChanged = Signal(str)
+    modeSet = Signal(str)                    # a tool chosen on the rail or by its key
 
     ICONS = {"Pointer": "pointer", "Pan": "pan", "Zoom in": "zoom_in", "Zoom out": "zoom_out",
              "Fit": "fit", "1:1": "actual", "Grid": "grid", "Graphics": "graphics",
@@ -129,11 +166,12 @@ class VisionDisplay(QWidget):
 
         # ---- the record selector -----------------------------------------
         self.recordBar, rb = _float_bar(self)
-        self.record = QComboBox()
+        self.record = RecordBox()
         self.record.setMinimumWidth(165)
-        self.record.setToolTip("Which image to show - the current input, or a "
-                               "record from the last run")
-        self.record.currentTextChanged.connect(self._record_picked)
+        self.record.setToolTip("Which picture to show. Checks are drawn and taught on the "
+                               "Teach picture; Last inspection shows where each check "
+                               "found its part")
+        self.record.keyChanged.connect(self._record_picked)
         rb.addWidget(self.record)
 
         # ---- position and pixel value ------------------------------------
@@ -184,6 +222,25 @@ class VisionDisplay(QWidget):
             else:
                 zl.addWidget(self._button(name, tip, fn))
 
+        # ---- a note over the picture, with one action ------------------------
+        self.noteBar, nl = _float_bar(self)
+        nl.setContentsMargins(12, 3, 4, 3)
+        nl.setSpacing(8)
+        self.noteText = QLabel("")
+        self.noteText.setObjectName("floatValue")
+        self.noteText.setWordWrap(True)
+        self.noteBtn = QToolButton()
+        self.noteBtn.setObjectName("noteAction")
+        self.noteBtn.setFocusPolicy(Qt.NoFocus)
+        nl.addWidget(self.noteText, 1)
+        nl.addWidget(self.noteBtn)
+        self.noteBar.hide()
+        self._note_fn = None
+        self.noteBtn.clicked.connect(lambda: self._note_fn and self._note_fn())
+        # called before a drawing tool is taken up: a window can first switch
+        # to the picture regions are drawn on
+        self.before_draw = None
+
         # ---- transform -----------------------------------------------------
         self._build_transform_bar()
 
@@ -201,8 +258,23 @@ class VisionDisplay(QWidget):
         self.rail.setVisible(toolbar)
         self.zoomBar.setVisible(toolbar)
         self.recordBar.setVisible(records)
-        for w in (self.rail, self.recordBar, self.statusRow, self.zoomBar, self.transformBar):
+        for w in (self.rail, self.recordBar, self.statusRow, self.zoomBar, self.transformBar,
+                  self.noteBar):
             w.raise_()
+
+    def set_note(self, text, action=None):
+        """A short note over the top of the picture, with an optional
+        (label, function) button; None hides it."""
+        if not text:
+            if not self.noteBar.isHidden():
+                self.noteBar.hide()
+            return
+        self.noteText.setText(text)
+        self._note_fn = action[1] if action else None
+        self.noteBtn.setText(action[0] if action else "")
+        self.noteBtn.setVisible(bool(action))
+        self.noteBar.show()
+        self._place()
 
     # ------------------------------------------------------------ building
     @staticmethod
@@ -344,6 +416,14 @@ class VisionDisplay(QWidget):
         # the transform bar in the top band, between the rail and the record
         # selector -- whole if it fits, its arrange buttons only if not (the
         # exact numbers are in the tool's Region settings too), else not at all
+        if not self.noteBar.isHidden():
+            nx0 = gap + (left if rail_on else 0)
+            nx1 = (rb.x() - gap) if not rb.isHidden() else W - gap
+            nb = self.noteBar
+            nb.setMaximumWidth(max(160, nx1 - nx0))
+            nb.adjustSize()
+            nb.move(nx0 + max(0, (nx1 - nx0 - nb.width()) // 2),
+                    (top + gap) if top else gap)
         if t.isHidden():
             return
         x0 = gap + (left if rail_on else 0)
@@ -371,10 +451,16 @@ class VisionDisplay(QWidget):
 
     # ------------------------------------------------------------ modes
     def _set_mode(self, mode):
+        if mode.startswith("draw") and self.before_draw is not None:
+            self.before_draw()
         self.canvas.set_mode(mode)
         self.canvas.setFocus()
+        self.modeSet.emit(mode)
 
     def _mode_from_canvas(self, mode):
+        if mode.startswith("draw") and self.before_draw is not None:
+            self.before_draw()
+        self.modeSet.emit(mode)
         a = {"select": self.aPointer, "hand": self.aPan, "draw_rect": self.aRect,
              "draw_ellipse": self.aEllipse, "draw_polygon": self.aPolygon}.get(mode)
         if a is not None and a.isVisible() or mode in ("select", "hand"):

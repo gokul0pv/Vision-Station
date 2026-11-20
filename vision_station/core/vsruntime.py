@@ -64,8 +64,6 @@ def _imwrite(path, image):
         buf.tofile(path)
     return bool(ok)
 
-COLOURS = {"pass": (74, 170, 40), "fail": (60, 55, 225), "warn": (30, 160, 235),
-           "error": (30, 160, 235), "search": (248, 189, 56)}
 
 
 # ================================================================ loading
@@ -452,83 +450,14 @@ def _safe(name):
 
 
 # ================================================================ drawing
-def _tag(out, text, x, y, col, scale, lw):
-    """A label as the result page draws it: a filled tag in the status
-    colour just above (x, y), kept inside the picture. Coloured text alone
-    was lost over a busy board."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    th = max(1, lw)
-    (tw, tht), base = cv2.getTextSize(text, font, scale, th)
-    pad = max(2, int(round(tht * 0.3)))
-    h, w = out.shape[:2]
-    x0 = int(min(max(0, x), max(0, w - tw - 2 * pad)))
-    y1 = int(y) - 2
-    y0 = y1 - tht - base - 2 * pad
-    if y0 < 0:                                  # no room above: just inside instead
-        y0, y1 = int(y) + 2, int(y) + 2 + tht + base + 2 * pad
-    cv2.rectangle(out, (x0, y0), (x0 + tw + 2 * pad, y1), col, -1)
-    ink = (0, 0, 0) if (0.114 * col[0] + 0.587 * col[1] + 0.299 * col[2]) > 150 else (255, 255, 255)
-    cv2.putText(out, text, (x0 + pad, y1 - pad - base // 2), font, scale, ink, th, cv2.LINE_AA)
-
-
 def draw(image, raw, banner=True, title="", labels=True, only_failures=False, search=False):
-    """Draw an inspection's graphics on a copy of the image -- the same
-    geometry the application shows, rendered with OpenCV only.
-
-    labels: True names every check, False none, "failed" only the checks
-    that did not pass -- as the result page does. With two hundred Part
-    present checks on a board, naming every one buried the board under its
-    labels."""
-    out = image.copy() if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    h, w = out.shape[:2]
-    lw = max(1, int(round(max(h, w) / 700.0)))
-    fs = max(0.4, max(h, w) / 1600.0)
-    for t in raw["tools"]:
-        if only_failures and t["status"] == "pass":
-            continue
-        name_it = labels is True or (labels == "failed" and t["status"] != "pass")
-        for g in t.get("graphics", []):
-            if g.get("status") == "search" and not search:
-                continue                      # search guides are for tuning, off by default
-            col = COLOURS.get(g.get("status", t["status"]), COLOURS["pass"])
-            pts = np.array(g.get("points", []), np.float32)
-            if pts.size == 0:
-                continue
-            kind = g.get("kind")
-            if kind == "rect" and len(pts) >= 2:
-                cv2.rectangle(out, tuple(np.round(pts[0]).astype(int)),
-                              tuple(np.round(pts[1]).astype(int)), col, lw, cv2.LINE_AA)
-            elif kind == "poly":
-                cv2.polylines(out, [np.round(pts).astype(np.int32)], True, col, lw, cv2.LINE_AA)
-            elif kind == "line" and len(pts) >= 2:
-                cv2.line(out, tuple(np.round(pts[0]).astype(int)),
-                         tuple(np.round(pts[-1]).astype(int)), col, lw, cv2.LINE_AA)
-            elif kind == "point":
-                cv2.drawMarker(out, tuple(np.round(pts[0]).astype(int)), col,
-                               cv2.MARKER_CROSS, 6 * lw, lw)
-            label = (g.get("label") or "") if name_it else ""
-            if label and kind != "text":
-                x, y = np.round(pts.min(axis=0)).astype(int)
-                _tag(out, label, int(x), int(y), col, max(0.4, fs * 0.5), max(1, lw // 2 + 1))
-            elif kind == "text" and label:
-                x, y = np.round(pts[0]).astype(int)
-                _tag(out, label, int(x), int(y), col, max(0.4, fs * 0.5), max(1, lw // 2 + 1))
-    if banner:
-        # Above the image, not over it: a result picture must never hide any
-        # of what was inspected -- painted over the top, the banner covered the
-        # labels of regions near the upper edge.
-        ok = raw["verdict"] == "PASS"
-        bh = int(28 * fs * 1.6)
-        strip = np.zeros((bh, w, 3), np.uint8)
-        strip[:] = COLOURS["pass" if ok else "fail"]
-        failed = [t["tool_id"] for t in raw["tools"] if t["status"] != "pass"]
-        txt = "%s%s   %.0f ms%s" % (title + "   " if title else "", raw["verdict"],
-                                     raw.get("total_ms", 0.0),
-                                     ("   failed: " + ", ".join(failed)) if failed else "")
-        cv2.putText(strip, txt, (int(10 * fs), int(bh * 0.72)), cv2.FONT_HERSHEY_SIMPLEX,
-                    fs, (255, 255, 255), max(1, lw), cv2.LINE_AA)
-        out = np.vstack([strip, out])
-    return out
+    """The result picture: every check outlined in the shape it was drawn,
+    blue for OK and red for NG, with its result in words beside it, and the
+    verdict in a banner above the image. The drawing itself is
+    vision_station/core/annotate.py, shared with the application."""
+    from vision_station.core import annotate
+    return annotate.draw(image, raw, banner=banner, title=title, labels=labels,
+                         only_failures=only_failures, search=search)
 
 
 # ================================================================ command line

@@ -22,6 +22,7 @@ TEXT_ROWS = [
     ("min_chars", "Ignore lines shorter than (characters)", "int", 1, (1, 40, 1)),
     ("detail", "Print size", "choice", "auto", ["auto", "fine", "fast"]),
     ("script", "Script", "choice", "latin", ["latin", "any"]),
+    ("ignore_stray_marks", "Ignore stray marks at the edges", "bool", True, None),
 ]
 CHANNEL_ROW = ("channel", "Colour channel", "choice", "auto",
                ["auto", "grey", "red", "green", "blue"])
@@ -94,6 +95,7 @@ SCHEMA = {
     ],
     "ocr": [
         ("expect_contains", "Must contain", "text", "", None),
+        ("compare_barcode", "Compare barcode with barcode scanned", "bool", False, None),
         *TEXT_ROWS,
     ],
     "image_process": [
@@ -275,6 +277,7 @@ SCHEMA = {
         ("expect_text", "Exact text", "text", "", None),
         ("expect_regex", "Or a pattern", "text", "", None),
         ("strip_spaces", "Ignore spaces", "bool", True, None),
+        ("look_alike", "Look-alikes match", "bool", True, None),
         *TEXT_ROWS,
     ],
     # Earlier recipes only: both now run Read text. Not offered for new checks.
@@ -287,6 +290,7 @@ SCHEMA = {
         *TEXT_ROWS,
     ],
     "code_read": [
+        ("compare_barcode", "Compare barcode with barcode scanned", "bool", False, None),
         ("datamatrix", "Try DataMatrix", "bool", True, None),
         ("timeout_ms", "Decode timeout (ms)", "int", 800, (50, 10000, 50)),
         ("expect_regex", "Expected pattern", "text", "", None),
@@ -464,11 +468,11 @@ ESSENTIAL = {
     "led_glow": ["expect_state", "source"],
     "defect_diff": ["threshold", "min_area", "max_defects"],
     "anomaly": ["model", "threshold"],
-    "ocr": ["expect_contains", "min_confidence"],
+    "ocr": ["expect_contains", "compare_barcode", "min_confidence"],
     "ocv": ["expect_text", "expect_regex", "min_confidence"],
     "ocr_auto": ["expect_contains", "min_confidence"],
     "text_detect": ["expect_contains", "min_confidence"],
-    "code_read": ["expect_regex", "datamatrix"],
+    "code_read": ["compare_barcode", "expect_regex", "datamatrix"],
     "measure_length": ["nominal_mm", "tolerance_mm", "axis"],
     "caliper": ["expect_count", "expected_width", "width_tolerance"],
     "find_line": ["polarity", "min_contrast"],
@@ -500,6 +504,16 @@ ESSENTIAL = {
 # One plain sentence under a setting. Keyed by setting name, or by
 # (check type, setting name) when the same name means something else.
 HELP = {
+    ("ocv", "look_alike"): "O and 0, I and 1, S and 5, B and 8, Z and 2 (and i, s, z) count "
+                           "as the same character: the reader confuses them, a marking "
+                           "does not.",
+    "compare_barcode": "With the barcode check on in Settings: what this check reads on the "
+                       "part must be the scanned code, or the part is NG - Barcode not "
+                       "good - and its other checks are skipped. Checking it moves this "
+                       "check to just after the fixture.",
+    "ignore_stray_marks": "A pad, a solder joint or the next part at the edge of the box is "
+                          "sometimes read as a letter, differently on each picture. On, those "
+                          "are left out so one part gives one result every run.",
     "min_score": "How closely it must match the reference, 0 to 1. Lower it if good parts are "
                  "missed; raise it if wrong parts get through.",
     ("align", "min_score"): "How closely the part must match the reference, 0 to 1. Lower it if "

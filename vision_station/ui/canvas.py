@@ -14,21 +14,53 @@ import math
 import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
-                           QPen, QPixmap, QPolygonF)
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter,
+                           QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPixmapItem, QGraphicsPolygonItem,
                                QGraphicsRectItem, QGraphicsScene, QGraphicsView)
 
-PASS = QColor("#18C25A")
-FAIL = QColor("#FF3B30")
-WARN = QColor("#FFA000")
-SEL = QColor("#00A8FF")
+# Result colours come from core/annotate.py, so the screen, saved result
+# pictures and a line PC's pictures agree: blue OK, red NG, orange warnings.
+from vision_station.core.annotate import STYLE as _ANN
+
+PASS = QColor(_ANN["ok"])
+FAIL = QColor(_ANN["ng"])
+WARN = QColor(_ANN["warn"])
+# Selection is violet, as current design tools mark what is being edited:
+# blue means OK, red NG and orange a warning, so the selection takes the one
+# colour none of the results use. (It was amber, too close to the warnings.)
+SEL = QColor("#7C5CFF")
+RESULT_W = float(_ANN["line_screen_px"])
 IDLE = QColor("#9AA7B4")
 GUIDE = QColor("#FF3B9A")
 SEARCH = QColor("#38BDF8")
 # "search" marks where a tool looks -- a Find Circle's search ring, Find Line's
 # calipers -- drawn thin and dashed so it never reads as something found.
 STATUS_COLOR = {"pass": PASS, "fail": FAIL, "warn": WARN, "error": WARN, "search": SEARCH}
+
+
+def _follow_look():
+    """Settings > Results changed the OK / NG colours or line thickness. The
+    colours are changed in place, so every module holding PASS / FAIL (and
+    STATUS_COLOR) sees them; RESULT_W is read at each paint."""
+    global RESULT_W
+    PASS.setRgb(*QColor(_ANN["ok"]).getRgb()[:3])
+    FAIL.setRgb(*QColor(_ANN["ng"]).getRgb()[:3])
+    RESULT_W = float(_ANN["line_screen_px"])
+    for c in list(_SHOWING):                  # results on screen now: redrawn at once
+        try:
+            c.draw_results(c._drawn_tools)
+            c.viewport().update()
+        except RuntimeError:                  # its window has been closed
+            _SHOWING.discard(c)
+
+
+import weakref  # noqa: E402
+_SHOWING = weakref.WeakSet()                  # canvases showing results
+
+
+from vision_station.core import annotate as _annotate_look  # noqa: E402
+_annotate_look.on_look_changed(_follow_look)
 
 SNAP = 7.0           # snapping distance, in screen pixels
 HANDLE = 4.5         # half a resize handle, in screen pixels
@@ -123,6 +155,9 @@ def _show_enabled(item, enabled):
     item.setToolTip("" if enabled else "%s - not run (switched off)" % item.tool_id)
 
 
+MANY_SELECTED = 3      # more boxes selected than this: no name and size on each
+
+
 def show_label(item):
     """Whether a region's name tag is drawn, for every region shape.
 
@@ -131,6 +166,10 @@ def show_label(item):
     pol = getattr(item.canvas, "label_policy", "smart")
     if pol == "all":
         return True
+    if item.isSelected() and getattr(item.canvas, "_n_selected", 1) > MANY_SELECTED:
+        # thirteen boxes selected at once each with its name and size was a
+        # pile of labels over the parts; the list and the group bar name them
+        return item.status in ("fail", "error", "warn")
     if pol == "none":
         return item.isSelected()
     return (item.isSelected() or getattr(item, "layer", None) == "labels"
@@ -148,6 +187,100 @@ def ink_on(col):
     on_white = 1.05 / (lum + 0.05)
     on_black = (lum + 0.05) / 0.05
     return QColor("#111316") if on_black > on_white else QColor("#FFFFFF")
+
+
+TAG_MIN_SCREEN_PX = 9.0      # a result tag never shrinks below this on screen
+TAG_MAX_SCREEN_PX = 24.0     # ... nor grows beyond this, however far zoomed in
+
+
+def result_tag_height(box_h, picture_long, floor=0.0):
+    """One line of a result tag, in image pixels: a third of its box, kept
+    between 1/220 and 1/60 of the picture's long side. In image pixels, so
+    it grows and shrinks with the zoom as its box does -- down to `floor`
+    (the image pixels that make TAG_MIN_SCREEN_PX at the current zoom),
+    below which it would no longer be readable."""
+    ceil = None
+    if isinstance(floor, tuple):             # (smallest, largest) at this zoom
+        floor, ceil = floor
+    lo, hi = picture_long / 220.0, picture_long / 60.0
+    h = max(floor, lo, min(hi, box_h * 0.32))
+    if ceil:
+        # Never taller than this on screen: zoomed in on a few parts a tag a
+        # third of its box was 80 px of "OK" covering the board.
+        h = max(floor, min(h, ceil))
+    return h
+
+
+def result_tag_rect(rect, lines, picture_long, floor=0.0):
+    """Where the tag for a box goes: on its top-left corner, sitting on the
+    top edge, as wide as its text."""
+    th = result_tag_height(rect.height(), picture_long, floor)
+    f = QFont()
+    f.setPixelSize(max(1, int(round(th * 0.70))))
+    f.setWeight(QFont.DemiBold)
+    fm = QFontMetricsF(f)
+    pad = th * 0.25
+    w = max(fm.horizontalAdvance(t) for t in lines) + 2 * pad
+    h = th * len(lines)
+    return QRectF(rect.left(), rect.top() - h, w, h), f, th, pad
+
+
+def paint_result_tag(p, rect, lines, col, picture_long, lift=0.0, floor=0.0):
+    """A check's result in words, attached to its box: a tag in the result's
+    colour on the box's top-left corner (core/annotate.py has the words).
+    lift raises it above the tags of other checks on the same corner.
+    Returns the tag's rectangle."""
+    box, f, th, pad = result_tag_rect(rect, lines, picture_long, floor)
+    box.translate(0, -lift)
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(Qt.NoPen)
+    fill = QColor(col)
+    fill.setAlpha(240)
+    p.setBrush(QBrush(fill))
+    p.drawRoundedRect(box, th * 0.18, th * 0.18)
+    p.setFont(f)
+    p.setPen(QPen(ink_on(col), 0))
+    for i, t in enumerate(lines):
+        p.drawText(QRectF(box.left() + pad, box.top() + i * th, box.width() - pad, th),
+                   Qt.AlignVCenter | Qt.AlignLeft, t)
+    p.restore()
+    return box
+
+
+class ResultTag(QGraphicsItem):
+    """A result tag for a check whose region is not on the canvas as an
+    editable item -- the run view: drawn on the corner of its outline, in
+    image pixels so it scales with the zoom."""
+
+    def __init__(self, rect, lines, col, picture_long):
+        super().__init__()
+        self._rect, self._lines, self._col = QRectF(rect), list(lines), col
+        self._long = picture_long
+        self._lift = 0.0
+        self._floor = 0.0
+        self.setAcceptedMouseButtons(Qt.NoButton)
+
+    def set_caption_floor(self, floor):
+        if floor != self._floor:
+            self.prepareGeometryChange()
+            self._floor = floor
+
+    def box_rect(self):
+        return self._rect
+
+    def set_caption_lift(self, lift):
+        if lift != self._lift:
+            self.prepareGeometryChange()
+            self._lift = lift
+
+    def boundingRect(self):
+        r = result_tag_rect(self._rect, self._lines, self._long, self._floor)[0]
+        return r.translated(0, -self._lift).adjusted(-2, -2, 2, 2)
+
+    def paint(self, p, opt, widget=None):
+        paint_result_tag(p, self._rect, self._lines, self._col, self._long, self._lift,
+                         self._floor)
 
 
 def draw_name_tag(p, item, rect, col, s):
@@ -272,9 +405,37 @@ class RegionItem(QGraphicsRectItem):
         r = self.rect()
         return QPointF(r.center().x(), r.top() - 24 * self._s())
 
+    def set_caption(self, lines, picture_long):
+        """The check's result in words, painted on this box's corner -- it
+        moves and scales with the box. None clears it."""
+        lines = list(lines) if lines else None
+        if lines == getattr(self, "caption", None) and \
+                picture_long == getattr(self, "_cap_long", 0):
+            return
+        self.prepareGeometryChange()
+        self.caption, self._cap_long = lines, picture_long
+
+    def set_caption_lift(self, lift):
+        if lift != getattr(self, "_cap_lift", 0.0):
+            self.prepareGeometryChange()
+            self._cap_lift = lift
+
+    def set_caption_floor(self, floor):
+        if floor != getattr(self, "_cap_floor", 0.0):
+            self.prepareGeometryChange()
+            self._cap_floor = floor
+
+    def _caption_extent(self, rect):
+        if not getattr(self, "caption", None):
+            return 0.0, 0.0
+        box = result_tag_rect(rect, self.caption, self._cap_long,
+                              getattr(self, "_cap_floor", 0.0))[0]
+        return box.height() + getattr(self, "_cap_lift", 0.0), max(0.0, box.right() - rect.right())
+
     def boundingRect(self):
         m = (ROT_ZONE + 6) * self._s()
-        return self.rect().adjusted(-m, -m - 34 * self._s(), m, m + 12 * self._s())
+        ch, cw = self._caption_extent(self.rect())
+        return self.rect().adjusted(-m, -m - 34 * self._s() - ch, m + cw, m + 12 * self._s())
 
     def shape(self):
         """What a click hits. A selected region also owns its handles, its
@@ -309,15 +470,13 @@ class RegionItem(QGraphicsRectItem):
         p.setRenderHint(QPainter.Antialiasing, True)
 
         hover = getattr(self, "_hover", False) and not sel
-        pen = QPen(col, (2.0 if (sel or hover) else 1.25) * s)
+        # With a result the outline is the result -- blue OK, red NG -- drawn
+        # firmly enough to read at a glance; without one, thin and dashed.
+        width = RESULT_W if (self.status or sel or hover) else 1.25
+        pen = QPen(col, width * s)
         pen.setStyle(Qt.SolidLine if (sel or hover or self.status) else Qt.DashLine)
-        # A passing region is not news. Drawn thin and faint so the eye goes to
-        # what failed, which is the only thing anyone looks at a result for.
-        quiet = self.status == "pass" and not sel and not hover
-        if quiet:
-            pen.setColor(QColor(col.red(), col.green(), col.blue(), 130))
         p.setPen(pen)
-        alpha = 30 if sel else 22 if hover else (6 if quiet else 12)
+        alpha = 30 if sel else 22 if hover else 10
         p.setBrush(QBrush(QColor(col.red(), col.green(), col.blue(), alpha)))
         if self.region_shape == "ellipse":
             p.drawEllipse(self.rect())
@@ -341,7 +500,29 @@ class RegionItem(QGraphicsRectItem):
             hs = HANDLE * s
             p.setBrush(QBrush(QColor("#FFFFFF")))
             p.setPen(QPen(SEL, 1.5 * s))
-            if self.region_shape == "ellipse":
+            if self.region_shape != "ellipse":
+                # round corner handles and pill-shaped edge handles, each with
+                # a soft shadow so it stands off any picture
+                for key, pt in self._handles().items():
+                    if key in ("tm", "bm", "ml", "mr"):
+                        long_, thin = hs * 2.9, hs * 1.45
+                        horiz = key in ("tm", "bm")
+                        w, h = (long_, thin) if horiz else (thin, long_)
+                        box = QRectF(pt.x() - w / 2, pt.y() - h / 2, w, h)
+                        rad = thin / 2
+                    else:
+                        rr = hs * 1.25
+                        box = QRectF(pt.x() - rr, pt.y() - rr, rr * 2, rr * 2)
+                        rad = rr
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(QBrush(QColor(0, 0, 0, 55)))
+                    p.drawRoundedRect(box.translated(0, 0.9 * s).adjusted(-0.6 * s, -0.6 * s,
+                                                                         0.6 * s, 0.6 * s),
+                                      rad + 0.6 * s, rad + 0.6 * s)
+                    p.setBrush(QBrush(QColor("#FFFFFF")))
+                    p.setPen(QPen(SEL, 1.6 * s))
+                    p.drawRoundedRect(box, rad, rad)
+            elif self.region_shape == "ellipse":
                 # round handles on the curve, and a centre mark -- the ellipse
                 # is defined by that centre and stays put while it is resized
                 for pt in self._handles().values():
@@ -349,10 +530,6 @@ class RegionItem(QGraphicsRectItem):
                 c = self.rect().center()
                 p.drawLine(QPointF(c.x() - hs * 1.6, c.y()), QPointF(c.x() + hs * 1.6, c.y()))
                 p.drawLine(QPointF(c.x(), c.y() - hs * 1.6), QPointF(c.x(), c.y() + hs * 1.6))
-            else:
-                for pt in self._handles().values():
-                    p.drawRoundedRect(QRectF(pt.x() - hs, pt.y() - hs, hs * 2, hs * 2),
-                                      1.5 * s, 1.5 * s)
             if self.layer == "tools":
                 grip = self._grip()
                 p.setPen(QPen(SEL, 1.5 * s))
@@ -360,13 +537,20 @@ class RegionItem(QGraphicsRectItem):
                 p.setBrush(QBrush(QColor("#FFFFFF")))
                 p.drawEllipse(grip, hs * 1.3, hs * 1.3)
 
-        if not self._show_label():
+        r = self.rect()
+        top = r.top()
+        if getattr(self, "caption", None):
+            # the result, attached to the box -- in the result's colour even
+            # while the box is selected
+            top = paint_result_tag(p, r, self.caption, base, self._cap_long,
+                                   getattr(self, "_cap_lift", 0.0),
+                                   getattr(self, "_cap_floor", 0.0)).top()
+        if not self._show_label() or (getattr(self, "caption", None) and not sel):
             return
         p.setRenderHint(QPainter.Antialiasing, False)
-        r = self.rect()
-        fm, th = draw_name_tag(p, self, r, col, s)
+        fm, th = draw_name_tag(p, self, QRectF(r.left(), top, r.width(), r.height()), col, s)
 
-        if sel:
+        if sel and getattr(self.canvas, "_n_selected", 1) <= MANY_SELECTED:
             if self.region_shape == "ellipse":
                 if abs(r.width() - r.height()) < 1.0:
                     dims = "r %d" % int(round(r.width() / 2))
@@ -377,12 +561,12 @@ class RegionItem(QGraphicsRectItem):
                 dims = f"{int(round(r.width()))} × {int(round(r.height()))}"
             if abs(self.angle) > 1e-6:
                 dims += "  ∠ %.1f°" % self.signed_angle()
-            dw = fm.horizontalAdvance(dims) + 12 * s
-            box = QRectF(r.center().x() - dw / 2, r.bottom() + 6 * s, dw, th)
+            dw = fm.horizontalAdvance(dims) + 16 * s
+            box = QRectF(r.center().x() - dw / 2, r.bottom() + 8 * s, dw, th)
             p.setRenderHint(QPainter.Antialiasing, True)
             p.setPen(Qt.NoPen)
             p.setBrush(QBrush(SEL))
-            p.drawRoundedRect(box, 4 * s, 4 * s)
+            p.drawRoundedRect(box, th / 2.0, th / 2.0)
             p.setPen(QPen(ink_on(SEL), 0))
             p.drawText(box, Qt.AlignCenter, dims)
 
@@ -743,9 +927,16 @@ class PolygonItem(QGraphicsPolygonItem):
         v = self.scene().views() if self.scene() else None
         return 1.0 / max(0.02, v[0].transform().m11()) if v else 1.0
 
+    set_caption = RegionItem.set_caption
+    set_caption_lift = RegionItem.set_caption_lift
+    set_caption_floor = RegionItem.set_caption_floor
+    _caption_extent = RegionItem._caption_extent
+
     def boundingRect(self):
         m = 16 * self._s()
-        return self.polygon().boundingRect().adjusted(-m, -m - 14 * self._s(), m, m)
+        bb = self.polygon().boundingRect()
+        ch, cw = self._caption_extent(bb)
+        return bb.adjusted(-m, -m - 14 * self._s() - ch, m + cw, m)
 
     # -- painting --------------------------------------------------------
     def paint(self, p, opt, widget=None):
@@ -753,7 +944,7 @@ class PolygonItem(QGraphicsPolygonItem):
         sel = self.isSelected()
         base = self.colour or STATUS_COLOR.get(self.status, IDLE)
         col = SEL if sel else base
-        pen = QPen(col, 0)
+        pen = QPen(col, (RESULT_W if (self.status or sel) else 1.25) * s)
         pen.setStyle(Qt.SolidLine if (sel or self.status) else Qt.DashLine)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setPen(pen)
@@ -781,9 +972,15 @@ class PolygonItem(QGraphicsPolygonItem):
             p.setRenderHint(QPainter.Antialiasing, False)
         p.setRenderHint(QPainter.Antialiasing, False)
 
-        if not show_label(self):
+        bb = self.polygon().boundingRect()
+        top = bb.top()
+        if getattr(self, "caption", None):
+            top = paint_result_tag(p, bb, self.caption, base, self._cap_long,
+                                   getattr(self, "_cap_lift", 0.0),
+                                   getattr(self, "_cap_floor", 0.0)).top()
+        if not show_label(self) or (getattr(self, "caption", None) and not sel):
             return
-        draw_name_tag(p, self, self.polygon().boundingRect(), col, s)
+        draw_name_tag(p, self, QRectF(bb.left(), top, bb.width(), bb.height()), col, s)
 
     # -- editing ---------------------------------------------------------
     def _vertex_at(self, pos):
@@ -935,6 +1132,7 @@ class ImageCanvas(QGraphicsView):
     statusText = Signal(str)
     lockChanged = Signal(str, bool)     # a region was locked or unlocked
     modeChanged = Signal(str)           # select | hand | draw_* chosen from the keyboard
+    escaped = Signal()                  # Esc with nothing being drawn
     arranged = Signal(str)              # align / distribute / match size / rotate, by name
 
     def __init__(self):
@@ -1007,6 +1205,10 @@ class ImageCanvas(QGraphicsView):
         # and any manual zoom turns it off. It used to be applied once, so
         # resizing the window left the image at its old size.
         self.fit_mode = True
+        # the smallest a result tag is drawn on screen; the run view, read
+        # from a step away, sets it larger
+        self.tag_min_px = TAG_MIN_SCREEN_PX
+        self.tag_max_px = TAG_MAX_SCREEN_PX
         self.show_grid = False
         # Said in the middle of an empty display, so a blank panel reads as
         # "nothing yet" rather than as a broken camera.
@@ -1021,6 +1223,9 @@ class ImageCanvas(QGraphicsView):
         self._move_start = {}
         self._hud = None
         self.sc.selectionChanged.connect(self._emit_selection)
+        # result tags keep a readable size when zoomed far out: re-placed
+        # whenever the zoom changes
+        self.zoomChanged.connect(lambda _k: self._apply_captions())
 
     def set_chrome_margins(self, left, top, right, bottom):
         """Keep a band round the image for the display's toolbars, so they sit
@@ -1084,6 +1289,7 @@ class ImageCanvas(QGraphicsView):
         """
         self._img = img
         if img is None:
+            self._shown_src = None
             self.pix.setPixmap(QPixmap())
             self.viewport().update()
             return
@@ -1092,6 +1298,26 @@ class ImageCanvas(QGraphicsView):
         refit = resized or not keep_view or not self.fitted or self.fit_mode
         zoom = self._fit_zoom(w, h) if refit else self.transform().m11()
         scale = self._needed_scale(zoom)
+        # The same picture at the same detail is already drawn. Every edit
+        # redraws the editor, and scaling a 20-megapixel frame again each
+        # time (15-40 ms) was the lag felt while resizing or reshaping a box.
+        # A sparse sample of the pixels goes with the array's identity, so a
+        # frame refilled in place is still drawn again.
+        print_ = img[::max(1, h // 9), ::max(1, w // 9)].tobytes()
+        want = 1.0 if scale >= 1.0 else scale
+        same = (getattr(self, "_shown_src", None) is img and not resized and
+                getattr(self, "_shown_print", None) == print_ and
+                abs(self._pix_scale - want) <= 0.02 * want)
+        self._shown_print = print_
+        if same:
+            if refit and not getattr(self, "_fitting", False):
+                self._fitting = True
+                try:
+                    self.fit()
+                finally:
+                    self._fitting = False
+            return
+        self._shown_src = img
         if scale < 1.0:
             sw, sh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
             small = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
@@ -1251,6 +1477,9 @@ class ImageCanvas(QGraphicsView):
             _show_enabled(it, (t.get("params") or {}).get("enabled", True))
             it.update()
         self.select_ids([t for t in selected if t in self.regions], silent=True)
+        for tid in list(getattr(self, "_outlines", {})):
+            self._hide_outline_under_region(tid)
+        self._apply_captions()
 
     # -- label layer ----------------------------------------------------
     def set_layer(self, layer):
@@ -1308,7 +1537,14 @@ class ImageCanvas(QGraphicsView):
             self.sc.blockSignals(False)
 
     def _emit_selection(self):
-        self.selectionChanged.emit(self.selected_ids())
+        ids = self.selected_ids()
+        many = len(ids) > MANY_SELECTED
+        if many != (getattr(self, "_n_selected", 0) > MANY_SELECTED):
+            self._n_selected = len(ids)
+            for it in self.regions.values():
+                it.update()
+        self._n_selected = len(ids)
+        self.selectionChanged.emit(ids)
 
     def commit_selection(self):
         if self.layer == "labels":
@@ -1632,76 +1868,130 @@ class ImageCanvas(QGraphicsView):
         self.overlay = []
 
     def draw_results(self, tools):
-        """Findings only. Region outlines are the RegionItems, so a tool's own
-        ROI rectangle is skipped here rather than drawn twice."""
+        """Each check's result: its outline in the shape it was drawn (the
+        region item itself, when the region is on the canvas for editing),
+        what it found, and its result in words just below it -- OK or NG,
+        the text read, the size in mm. Blue OK, red NG (core/annotate.py)."""
+        from vision_station.core import annotate
+        self._drawn_tools = list(tools or [])
+        _SHOWING.add(self)
         self.clear_overlay()
         self._slots = {}
-        f = QFont("Consolas", 8)
+        self._captions = {}                        # tool id -> (caption lines, colour)
+        self._tags = {}                            # tool id -> its own ResultTag
+        self._outlines = {}                        # tool id -> its result outline items
         for t in tools:
+            tid = t.get("tool_id")
+            item = self.regions.get(tid)
             for g in t.get("graphics", []):
                 pts = g["points"]
-                if g["kind"] == "rect" and len(pts) == 2:
-                    if any(abs(pts[0][0] - it.x()) < 3 and abs(pts[0][1] - it.y()) < 3
-                           for it in self.regions.values()):
-                        continue
+                if not pts:
+                    continue
                 c = STATUS_COLOR.get(g.get("status"), IDLE)
                 pen = QPen(c, 0)
                 pen.setCosmetic(True)
-                pen.setWidth(2)
+                pen.setWidthF(RESULT_W if g.get("role") == "region" else max(1.5, RESULT_W - 1))
                 if g.get("status") == "search":
                     if not getattr(self, "show_search", True):
                         continue
-                    pen.setWidth(1)
+                    pen.setWidthF(1.0)
                     pen.setStyle(Qt.DashLine)
                 k = g["kind"]
-                if k == "rect":
+                if k == "rect" and len(pts) >= 2:
                     it = self.sc.addRect(QRectF(QPointF(*pts[0]), QPointF(*pts[1])), pen)
-                elif k == "line":
-                    it = self.sc.addLine(pts[0][0], pts[0][1], pts[1][0], pts[1][1], pen)
+                elif k == "line" and len(pts) >= 2:
+                    it = self.sc.addLine(pts[0][0], pts[0][1], pts[-1][0], pts[-1][1], pen)
                 elif k == "poly":
                     it = self.sc.addPolygon(QPolygonF([QPointF(*p) for p in pts]), pen)
+                elif k == "circle" and len(pts) >= 2:
+                    r = ((pts[1][0] - pts[0][0]) ** 2 + (pts[1][1] - pts[0][1]) ** 2) ** 0.5
+                    it = self.sc.addEllipse(pts[0][0] - r, pts[0][1] - r, 2 * r, 2 * r, pen)
                 else:
                     it = self.sc.addEllipse(pts[0][0] - 3, pts[0][1] - 3, 6, 6, pen)
                 it.setZValue(20)
                 self.overlay.append(it)
-                if g.get("label") and (self.label_policy == "all"
-                                       or g.get("status") in ("fail", "error",
-                                                              "warn")):
-                    self._chip(str(g["label"]), pts[0][0], pts[0][1], c, f)
+                if g.get("role") == "region":
+                    self._outlines.setdefault(tid, []).append(it)
+            self._hide_outline_under_region(tid)
+            lines = t.get("caption") or []
+            if getattr(self, "tags_only_failures", False) and t.get("status") == "pass":
+                lines = []                    # the run view, many checks: failures only
+            if lines and self.label_policy != "none":
+                self._captions[tid] = (lines, STATUS_COLOR.get(t.get("status"), IDLE))
+                # A tag of its own on the result outline. While the check's
+                # region is on the canvas for editing, that region carries
+                # the tag instead and this one is hidden with the outline.
+                g = annotate.outline(t)
+                pts = g["points"] if g else [q for x in t.get("graphics", [])
+                                             if x.get("status") != "search"
+                                             for q in x.get("points", [])]
+                if pts:
+                    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+                    tag = ResultTag(QRectF(min(xs), min(ys), max(xs) - min(xs),
+                                           max(ys) - min(ys)), lines,
+                                    self._captions[tid][1], self._picture_long())
+                    tag.setZValue(29)
+                    self.sc.addItem(tag)
+                    self.overlay.append(tag)
+                    self._tags[tid] = tag
+                    self._outlines.setdefault(tid, []).append(tag)
+                    self._hide_outline_under_region(tid)
+        self._apply_captions()
 
-    def _chip(self, text, x, y, colour, font):
-        """A finding's label: the same rounded pill as a region's name tag.
-        A label that is a region's own name is left to that region's tag --
-        drawn twice, the two overlapped into an unreadable smudge."""
-        own = self.regions.get(text)
-        if own is not None and own.isVisible() and show_label(own):
-            return
-        from PySide6.QtWidgets import QGraphicsPathItem
-        f = QFont("Segoe UI")
-        f.setPointSizeF(7.5)
-        f.setWeight(QFont.DemiBold)
-        tx = self.sc.addSimpleText(text, f)
-        tx.setBrush(QBrush(ink_on(colour)))
-        br = tx.boundingRect()
-        key = (round(x / 24), round(y / 18))
-        n = self._slots.get(key, 0)
-        self._slots[key] = n + 1
-        path = QPainterPath()
-        h = br.height() + 2
-        path.addRoundedRect(QRectF(-5, -1, br.width() + 10, h), h / 2.0, h / 2.0)
-        bg = QGraphicsPathItem(path)
-        fill = QColor(colour)
-        fill.setAlpha(235)
-        bg.setBrush(QBrush(fill))
-        bg.setPen(QPen(Qt.NoPen))
-        self.sc.addItem(bg)
-        for it in (bg, tx):
-            it.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
-        bg.setPos(x + 5, y - 17 - n * 16)
-        tx.setPos(x + 5, y - 17 - n * 16)
-        bg.setZValue(29)
-        tx.setZValue(30)
-        self.overlay += [bg, tx]
+    def _picture_long(self):
+        size = getattr(self, "_scene_size", None)
+        return float(max(size)) if size else 1000.0
+
+    def _apply_captions(self):
+        """Every check's result tag on its box: carried by the region item
+        while the region is on the canvas for editing, else by its own tag
+        on the result outline. Tags of boxes sharing a corner stack upward
+        instead of covering one another."""
+        caps = getattr(self, "_captions", {})
+        tags = getattr(self, "_tags", {})
+        L = self._picture_long()
+        k = max(1e-6, self.transform().m11())
+        lo_px = float(getattr(self, "tag_min_px", TAG_MIN_SCREEN_PX))
+        hi_px = max(lo_px, float(getattr(self, "tag_max_px", TAG_MAX_SCREEN_PX)))
+        floor = (lo_px / k, hi_px / k)
+        for tid, item in self.regions.items():
+            if hasattr(item, "set_caption"):
+                c = caps.get(tid)
+                item.set_caption(c[0] if c else None, L)
+        placed = []                                   # (left, top, height) in the image
+        for tid, (lines, _col) in caps.items():
+            item = self.regions.get(tid)
+            if item is not None and item.isVisible() and hasattr(item, "set_caption"):
+                holder = item
+                local = item.polygon().boundingRect() if hasattr(item, "polygon") else item.rect()
+                br = item.mapRectToScene(local)
+            elif tid in tags:
+                holder = tags[tid]
+                br = holder.box_rect()
+            else:
+                continue
+            holder.set_caption_floor(floor)
+            h = result_tag_rect(br, lines, L, floor)[0].height()
+            th = result_tag_height(br.height(), L, floor)
+            top = br.top() - h
+            for _ in range(8):
+                hit = [q for q in placed if abs(q[0] - br.left()) < th and
+                       top < q[1] + q[2] and q[1] < top + h]
+                if not hit:
+                    break
+                top = min(q[1] for q in hit) - h
+            placed.append((br.left(), top, h))
+            holder.set_caption_lift((br.top() - h) - top)
+            holder.update()
+
+    def _hide_outline_under_region(self, tid):
+        """A check whose region is on the canvas for editing is outlined by
+        that region item; its result outline as well showed every box
+        twice, a few pixels apart where the part had moved."""
+        item = self.regions.get(tid)
+        show = item is None or not item.isVisible()
+        for it in getattr(self, "_outlines", {}).get(tid, []):
+            it.setVisible(show)
 
     # -- navigation -----------------------------------------------------
     def cancel_draw(self):
@@ -1777,6 +2067,7 @@ class ImageCanvas(QGraphicsView):
                 self.cancel_draw()      # abandon the trace, keep the selection
             else:
                 self.sc.clearSelection()
+                self.escaped.emit()
             e.accept()
             return
         if k in (Qt.Key_Delete, Qt.Key_Backspace):

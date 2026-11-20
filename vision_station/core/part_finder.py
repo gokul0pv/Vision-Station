@@ -38,8 +38,23 @@ import numpy as np
 
 from vision_station import paths
 
-MODEL = os.environ.get("VS_PART_MODEL",
-                       paths.model("parts", "parts_yoloe26s.onnx"))
+GENERAL = paths.model("parts", "parts_yoloe26s.onnx")
+# A YOLO11 detector trained on the line's own board, on this PC's GPU
+# (scripts/train_parts.py): one class, input 1280, box + score -- the same
+# output this file reads from the general model. NOT the default: its labels
+# were the parts the general model found in most pictures, and the small
+# components flicker -- so it learned the tray's holes, the cages and the big
+# parts, and found none of the small components round the socket (the general
+# model: 35). Choosing one's own parts in an area needs the general model.
+# VS_PART_MODEL=<path> picks a model.
+TRAINED = paths.model("parts", "parts_trained.onnx")
+MODEL = os.environ.get("VS_PART_MODEL") or GENERAL
+
+
+def model_name():
+    """'trained for this board' or 'general', for the window to say."""
+    return "trained for this board" if os.path.abspath(MODEL) == os.path.abspath(TRAINED) \
+        else "general"
 SIZE = 1280              # the model's input
 OVERLAP = 256            # tile overlap at full resolution
 
@@ -432,6 +447,42 @@ def type_name(k):
 
 
 # ---------------------------------------------------------------- the whole job
+# The model trained for one board (scripts/train_parts.py) learned it in the
+# tiles it was cut into -- always at the same places of the picture. Tiles cut
+# from an area start elsewhere, and there it found next to nothing: 5
+# candidates where the general model had 567, one part in an area of dozens.
+# So for an area it looks at the whole picture, cut as it was taught, and the
+# finds inside the area are kept. The whole picture's finds are kept for the
+# next area of the same picture.
+_WHOLE = {}
+
+
+def _is_trained():
+    return os.path.abspath(MODEL) == os.path.abspath(TRAINED)
+
+
+def _area_from_whole(image, rect, progress=None):
+    rx, ry, rw, rh = rect
+    key = (os.path.abspath(MODEL), image.shape, image.ctypes.data,
+           int(image[::97, ::89].sum()))
+    if _WHOLE.get("key") != key:
+        img = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        _WHOLE.clear()
+        _WHOLE["raw"] = candidates(img, conf=0.05, progress=progress)
+        _WHOLE["key"] = key
+    b, s = _WHOLE["raw"]
+    if not len(b):
+        return b, s
+    # inside the area: at least 80 % of the box, in the crop's coordinates
+    ix = np.clip(np.minimum(b[:, 2], rx + rw) - np.maximum(b[:, 0], rx), 0, None)
+    iy = np.clip(np.minimum(b[:, 3], ry + rh) - np.maximum(b[:, 1], ry), 0, None)
+    k = ix * iy >= 0.8 * _area(b)
+    out = b[k] - np.float32([rx, ry, rx, ry])
+    out[:, [0, 2]] = np.clip(out[:, [0, 2]], 0, rw)
+    out[:, [1, 3]] = np.clip(out[:, [1, 3]], 0, rh)
+    return out, s[k]
+
+
 def find_parts(image, rect=None, sensitivity=0.5, progress=None, raw=None):
     """Parts inside rect ([x, y, w, h], None = whole image), in image
     coordinates. sensitivity 0..1: higher finds fainter parts and more
@@ -454,7 +505,10 @@ def find_parts(image, rect=None, sensitivity=0.5, progress=None, raw=None):
         crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
 
     if raw is None:
-        raw = candidates(crop, conf=0.05, progress=progress)
+        if rect is not None and _is_trained():
+            raw = _area_from_whole(image, (rx, ry, rw, rh), progress)
+        else:
+            raw = candidates(crop, conf=0.05, progress=progress)
     boxes, scores = raw
     sens = float(min(1.0, max(0.0, sensitivity)))
     conf = 0.40 - 0.34 * sens                # 0 -> 0.40, 0.5 -> 0.23, 1 -> 0.06
@@ -550,12 +604,16 @@ def find_similar(image, example, rect=None, min_score=0.70, turns=True, max_foun
     return out
 
 
-def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None):
+def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None, thresholds=None):
     """'Part present' check specs for the kept parts. names: type -> base
     name ('inductor'); ids are numbered per type and never collide with
     existing ones. The box gets a small margin of board round the part --
     what the check compares includes the part's outline -- and stays inside
-    the image when image_size (w, h) is given."""
+    the image when image_size (w, h) is given. thresholds: type -> the
+    accept threshold for that kind of part (default 0.65). Each check
+    carries its group -- the base name -- so a kind of part can be adjusted
+    together later."""
+    thresholds = thresholds or {}
     used = set(existing_ids)
     out = []
     count = {}
@@ -577,6 +635,112 @@ def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None):
             x0, y0 = max(0, x0), max(0, y0)
             x1, y1 = min(int(image_size[0]), x1), min(int(image_size[1]), y1)
         out.append({"id": tid, "type": "presence",
-                    "params": {"roi": [x0, y0, x1 - x0, y1 - y0], "min_score": 0.65,
-                               "search_pad": int(min(60, max(8, 0.15 * max(w, h))))}})
+                    "params": {"roi": [x0, y0, x1 - x0, y1 - y0],
+                               "min_score": round(float(thresholds.get(p["type"], 0.65)), 3),
+                               "search_pad": int(min(60, max(8, 0.15 * max(w, h)))),
+                               "group": base}})
+    return out
+
+
+# ---------------------------------------------------------------- text
+def _clip(image, box):
+    H, W = image.shape[:2]
+    x, y, w, h = [int(round(v)) for v in box]
+    x0, y0 = max(0, x), max(0, y)
+    return x0, y0, max(0, min(W, x + w) - x0), max(0, min(H, y + h) - y0)
+
+
+def find_text(image, rect=None, progress=None):
+    """Every line of text inside rect (None = whole image), read by the
+    application's own text reader (on the graphics card when there is one).
+    Same shape as find_parts: {"parts": [{"box", "text", "score", "type": 0}],
+    "types", "ms", "device"}; boxes in image coordinates."""
+    from vision_station.tools import ocr_engine
+    t0 = time.perf_counter()
+    rx, ry, rw, rh = _clip(image, rect or [0, 0, image.shape[1], image.shape[0]])
+    crop = image[ry:ry + rh, rx:rx + rw]
+    if crop.size == 0:
+        return {"parts": [], "types": 0, "ms": 0.0, "device": ""}
+    if progress:
+        progress(0, 1)
+    lines = ocr_engine.read(crop) or []
+    parts = []
+    for ln in lines:
+        text = str(ln.get("text") or "").strip()
+        if not text:
+            continue
+        x, y, w, h = [int(v) for v in ln["box"]]
+        parts.append({"box": [x + rx, y + ry, w, h], "text": text,
+                      "score": round(float(ln.get("confidence") or 0.0), 3), "type": 0})
+    parts.sort(key=lambda p: (p["box"][1] // max(8, p["box"][3]), p["box"][0]))
+    if progress:
+        progress(1, 1)
+    return {"parts": parts, "types": 1 if parts else 0,
+            "ms": (time.perf_counter() - t0) * 1000.0,
+            "device": ocr_engine.status().get("device") or ""}
+
+
+def read_box(image, box, margin=0.15):
+    """The text inside one box (with a little margin), as (text, confidence):
+    for a text box the user has just moved or resized."""
+    from vision_station.tools import ocr_engine
+    x, y, w, h = box
+    m = int(round(max(w, h) * margin)) + 2
+    cx, cy, cw, ch = _clip(image, [x - m, y - m, w + 2 * m, h + 2 * m])
+    crop = image[cy:cy + ch, cx:cx + cw]
+    if crop.size == 0:
+        return "", 0.0
+    lines = [ln for ln in (ocr_engine.read(crop) or []) if str(ln.get("text") or "").strip()]
+    if not lines:
+        return "", 0.0
+    lines.sort(key=lambda ln: (ln["box"][1], ln["box"][0]))
+    text = " ".join(str(ln["text"]).strip() for ln in lines)
+    conf = min(float(ln.get("confidence") or 0.0) for ln in lines)
+    return text, round(conf, 3)
+
+
+def text_tools(items, kind, existing_ids, image_size=None, base="text", min_confidence=None):
+    """Text checks for the kept text boxes. kind "ocv": Verify text, which
+    expects exactly the text shown (as corrected by the user); "ocr": Read
+    text, which reads it. items: [{"box", "text", "name"?}]. The region gets
+    a margin of background round the text -- a reader needs it."""
+    from vision_station.core.schema import defaults
+    kind = "ocv" if kind == "ocv" else "ocr"
+    used = set(existing_ids)
+    count = {}
+    out = []
+    for it in items:
+        name = (it.get("name") or base).strip()
+        name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or base
+        n = count.get(name, 0)
+        while True:
+            n += 1
+            tid = "%s_%02d" % (name, n)
+            if tid not in used:
+                break
+        count[name] = n
+        used.add(tid)
+        x, y, w, h = it["box"]
+        # A thin margin: enough background for the reader, not the edges of
+        # whatever the text is printed on -- a wider one took in an
+        # inductor's body and "R15" was read as "IR15".
+        mx, my = int(round(0.15 * h)) + 2, int(round(0.22 * h)) + 2
+        x0, y0, x1, y1 = x - mx, y - my, x + w + mx, y + h + my
+        if image_size:
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(int(image_size[0]), x1), min(int(image_size[1]), y1)
+        params = dict(defaults(kind))
+        params["roi"] = [x0, y0, x1 - x0, y1 - y0]
+        params["group"] = name
+        if min_confidence is not None:
+            params["min_confidence"] = round(float(min_confidence), 3)
+        if kind == "ocv":
+            params["expect_text"] = str(it.get("text") or "")
+        elif it.get("text"):
+            # A Read text check made from a line it read on a good part
+            # expects that line: on its own it passes whatever can be read,
+            # and a marker scribble read as "D" or a wrong "R16" read as
+            # "R1" passed. Cleared in the panel, it reads anything.
+            params["expect_contains"] = str(it["text"])
+        out.append({"id": tid, "type": kind, "params": params})
     return out

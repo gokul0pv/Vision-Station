@@ -494,10 +494,39 @@ QLabel#rowHelp { color: %(text3)s; font-size: %(t_small)spt; }
 QLabel#statusLine { color: %(text2)s; }
 QLabel#statusLine[tone="pass"] { color: %(success_text)s; }
 QLabel#statusLine[tone="fail"] { color: %(critical_text)s; }
+QLabel#statusLine[tone="warn"] { color: %(caution_text)s; }
+QLabel#rowHelp[tone="warn"] { color: %(caution_text)s; font-weight: 600; }
 QWidget#prefFooter { background: %(bg)s; border-top: 1px solid %(divider)s; }
 
 /* Find parts panel */
 QWidget#partFinder { background: %(bg)s; }
+
+/* ---------------------------------------------------------------- barcode */
+QFrame#barcodeBar { background: %(layer)s; border: 1px solid %(stroke)s; border-radius: %(m_r_large)spx; }
+QFrame#barcodeBar QLabel { background: transparent; }
+QLabel#barcodeCaption { font-weight: 600; font-size: %(t_callout)spt; color: %(text)s; }
+QLineEdit#barcodeField { font-family: %(mono)s; font-size: %(t_callout)spt; padding: 5px 10px;
+                         border: 1.5px solid %(stroke_strong)s; border-radius: 8px; background: %(bg)s; }
+QLineEdit#barcodeField:focus { border: 2px solid %(accent)s; }
+QLabel#barcodeState { padding: 3px 12px; font-size: %(t_body)spt; }
+QLineEdit#monoField { font-family: %(mono)s; }
+QFrame#barcodeBar QToolButton#linkButton { color: %(accent_text)s; border: 0; background: transparent; }
+QFrame#barcodeBar QToolButton#linkButton:hover { text-decoration: underline; }
+
+/* a note floating over the picture, with its one action */
+QToolButton#noteAction { background: %(accent)s; color: %(on_accent)s; border: 0; border-radius: 6px;
+                         padding: 3px 10px; font-weight: 600; }
+QToolButton#noteAction:hover { background: %(accent_hover)s; }
+
+/* a group of checks of one kind, adjusted together */
+QFrame#groupBar { background: %(accent_subtle)s; border: 1px solid %(stroke)s;
+                  border-radius: %(m_r_card)spx; margin: 2px 10px 6px 10px; }
+QFrame#groupBar QLabel { background: transparent; }
+QLabel#groupBarTitle { font-weight: 600; color: %(text)s; }
+
+/* the checks offered on a box just drawn */
+QMenu#drawnMenu { padding: 6px; }
+QMenu#drawnMenu::item { padding: 6px 28px 6px 10px; }
 """
 
 

@@ -492,17 +492,35 @@ def read_region(tool, image, ctx):
         one = ocr_engine.read_single_line(crop)
         if one is not None and one["confidence"] >= max(min_conf, 0.6):
             lines = [one]
+    if p.get("ignore_stray_marks", True):
+        # pad edges and neighbouring parts read as stray letters, differently
+        # on each frame: removed, so one part gives one result every run
+        lines = ocr_engine.clean_lines(lines)
     charset = p.get("charset", "") or ""
     min_chars = max(1, int(p.get("min_chars", 1) or 1))
     latin = str(p.get("script", "latin") or "latin") != "any"
     kept, unsure = [], []
+    def fit(text):
+        return _fit_charset(_latin_only(text) if latin else text, charset)
+
     for ln in lines:
-        t = _latin_only(ln["text"]) if latin else ln["text"]
-        t = _fit_charset(t, charset)
+        t = fit(ln["text"])
         if len(t) < min_chars:
             continue
-        (kept if ln["confidence"] >= min_conf else unsure).append(dict(ln, text=t))
+        ln = dict(ln, text=t)
+        if ln.get("core"):
+            ln["core"] = fit(ln["core"]) or None
+        (kept if ln["confidence"] >= min_conf else unsure).append(ln)
     return kept, unsure, (ox, oy), ocr_engine.engine_name()
+
+
+def _readings(lines, norm):
+    """What the region could be said to read, for comparing with an expected
+    text: all the lines together, each line, and each line without its stray
+    end characters (ocr_engine.core_text)."""
+    each = [norm(ln["text"]) for ln in lines]
+    cores = [norm(ln["core"]) for ln in lines if ln.get("core")]
+    return each, cores
 
 
 def _unsure_note(unsure, min_conf):
@@ -532,6 +550,28 @@ def _blocks(lines, ox, oy):
              "box": ln["box"],
              "image_box": [int(ox + ln["box"][0]), int(oy + ln["box"][1]),
                            int(ln["box"][2]), int(ln["box"][3])]} for ln in lines]
+
+
+def _scanned(tool, ctx):
+    """The barcode scanned for this part, when this check compares with it
+    and one was scanned (the barcode check on in Settings); else None."""
+    if not tool.p.get("compare_barcode"):
+        return None
+    code = (getattr(ctx, "share", None) or {}).get("barcode")
+    code = str(code).strip() if code else ""
+    return code or None
+
+
+def _compare_scanned(tool, ctx, read, exact=False):
+    """{} when not comparing; else the comparison's values, with
+    barcode_match False when the part does not carry the scanned code."""
+    scanned = _scanned(tool, ctx)
+    if scanned is None:
+        return {}
+    from vision_station.core import barcode as barcodes
+    match = barcodes.code_matches(scanned, read, look_alike=(not exact) and
+                                  bool(tool.p.get("look_alike", True)), exact=exact)
+    return {"barcode_scanned": scanned, "barcode_match": bool(match)}
 
 
 def _reader_error(tool, ctx, e, t0):
@@ -566,17 +606,28 @@ class Ocr(Tool):
         if not lines and unsure:
             why = _unsure_note(unsure, float(self.p.get("min_confidence", 0.5) or 0.0))
         if lines and want:
-            squeezed = re.sub(r"\s+", "", text).upper()
-            ok = re.sub(r"\s+", "", want).upper() in squeezed
+            def squeeze(t):
+                t = re.sub(r"\s+", "", t).upper()
+                return look_alike(t) if self.p.get("look_alike", True) else t
+            need = squeeze(want)
+            ok = any(need in squeeze(t) for t in [text] + [ln["core"] for ln in lines
+                                                            if ln.get("core")])
             why = "" if ok else "%r not found; read: %s" % (want, " | ".join(texts)[:200])
+        cmp = _compare_scanned(self, ctx, [text] + texts +
+                               [ln["core"] for ln in lines if ln.get("core")])
+        if cmp and not cmp["barcode_match"]:
+            ok = False
+            why = "Barcode not good: scanned %s, read %s" % (
+                cmp["barcode_scanned"], " | ".join(texts)[:120] or "nothing")
         st = "pass" if ok else "fail"
         g = self.roi_graphic(ctx, st, "" if lines else self.id) + \
-            _line_graphics(lines, ox, oy) + _line_graphics(unsure, ox, oy, "warn")
+            _line_graphics(lines, ox, oy, st) + _line_graphics(unsure, ox, oy, "warn")
         return ToolResult(self.id, self.type_name, st, conf,
                           {"text": text, "lines": texts, "texts": texts,
                            "blocks_found": len(lines), "blocks": _blocks(lines, ox, oy),
                            "confidence": round(conf, 3), "engine": engine,
-                           "skew_deg": 0.0, "quarter_turn": _common_turn(lines or unsure)},
+                           "skew_deg": 0.0, "quarter_turn": _common_turn(lines or unsure),
+                           **cmp},
                           g, why, (time.perf_counter() - t0) * 1000)
 
 
@@ -597,6 +648,19 @@ register("ocr_auto")(type("OcrAuto", (_LegacyFinder,), {}))
 register("text_detect")(type("TextDetect", (_LegacyFinder,), {}))
 
 
+# Characters a reader confuses with one another in printed markings; each
+# goes to one representative before an expected text is compared.
+# The small letters are there because a glint on a printed 1 reads as 'i'
+# ('RiS' for R15, measured on a real board), and small print read as s or z.
+_LOOK_ALIKE = str.maketrans({"O": "0", "o": "0", "Q": "0",
+                             "I": "1", "l": "1", "|": "1", "i": "1",
+                             "S": "5", "s": "5", "B": "8", "Z": "2", "z": "2"})
+
+
+def look_alike(text):
+    return text.translate(_LOOK_ALIKE)
+
+
 @register("ocv")
 class Ocv(Tool):
     """Verify, don't just read. Give it a pattern or the exact text; the
@@ -614,7 +678,7 @@ class Ocv(Tool):
         def norm(t):
             return re.sub(r"\s+", "", t) if strip else t
 
-        each = [norm(ln["text"]) for ln in lines]
+        each, cores = _readings(lines, norm)
         text = ("" if strip else " ").join(each)
         conf = float(np.mean([ln["confidence"] for ln in (lines or unsure)])) \
             if (lines or unsure) else 0.0
@@ -631,7 +695,12 @@ class Ocv(Tool):
             if unsure:
                 why = _unsure_note(unsure, float(self.p.get("min_confidence", 0.5) or 0.0))
         elif exact:
-            matched = next((c for c in [text] + each if c == exact), None)
+            # O read for 0, l for 1 -- the reader's look-alikes are not a wrong
+            # marking. A box shifted a fraction of a pixel read C01 as CO1 and
+            # failed a good part on its own teach picture.
+            same = (lambda a, b: look_alike(a) == look_alike(b)) \
+                if self.p.get("look_alike", True) else (lambda a, b: a == b)
+            matched = next((c for c in [text] + each + cores if same(c, exact)), None)
             ok, why = matched is not None, "read '%s', expected '%s'" % (text[:80], exact)
         elif pattern:
             try:
@@ -639,7 +708,7 @@ class Ocv(Tool):
             except re.error as e:
                 return _reader_error(self, ctx, ValueError(
                     "the expected pattern is not valid: %s" % e), t0)
-            matched = next((c for c in [text] + each if rx.fullmatch(c)), None)
+            matched = next((c for c in [text] + each + cores if rx.fullmatch(c)), None)
             ok, why = matched is not None, "read '%s' does not match /%s/" % (text[:80], pattern)
         else:
             ok, why = True, ""
@@ -762,11 +831,16 @@ class CodeRead(Tool):
             ok = hit is not None
             data = hit["data"] if hit else data
             why = "" if ok else "read '%s', which does not match /%s/" % (data[:60], pattern)
+        cmp = _compare_scanned(self, ctx, [f["data"] for f in found], exact=True)
+        if cmp and not cmp["barcode_match"]:
+            ok = False
+            why = "Barcode not good: scanned %s, read %s" % (
+                cmp["barcode_scanned"], ", ".join(f["data"] for f in found)[:120] or "no code")
         label = data if found else "no read"
         return ToolResult(self.id, self.type_name, "pass" if ok else "fail",
                           1.0 if found else 0.0,
                           {"codes": found, "data": data, "count": len(found),
-                           "read_from": how if found else ""},
+                           "read_from": how if found else "", **cmp},
                           self.roi_graphic(ctx, "pass" if ok else "fail", str(label)[:40]),
                           why, (time.perf_counter() - t0) * 1000)
 

@@ -67,6 +67,28 @@ def filter_graphics(graphics, opt):
     return out
 
 
+def _outline_and_caption(tool, r, ctx, reads_transformed=False):
+    """Every check drawn the same way on every picture: its outline in the
+    shape it was drawn, in its result's colour, and its result in words
+    (core/annotate.py). Tools that draw their own outline keep it; a check on
+    a transformed image is in that image's coordinates and gets no outline
+    on the camera's."""
+    from vision_station.core import annotate
+    if not reads_transformed and not any(g.role == "region" for g in r.graphics):
+        try:
+            r.graphics = tool.roi_graphic(ctx, r.status) + list(r.graphics)
+        except Exception:
+            pass
+    for g in r.graphics:
+        if g.role == "region":
+            g.status = r.status
+            g.label = ""
+    try:
+        r.caption = annotate.caption(r, tool.p)
+    except Exception:
+        r.caption = []
+
+
 def _resolve_link(ref, by_id):
     """'tool.key' -> that earlier tool's result value; 'tool.score' and
     'tool.status' work too. None when the tool has not run or has no such
@@ -116,6 +138,10 @@ class Project:
         if self.calibration is not None and self.reference is not None:
             self.reference = calibration.undistort(self.reference, self.calibration)
         self.tools = self.build_tools()
+        # the job's own trained network, when advanced training made one
+        # (core/advanced.py): it confirms the part and text checks it learned
+        from vision_station.core import advanced
+        self.advanced = advanced.load(self.folder, self.spec)
         return self
 
     def build_tools(self, spec=None):
@@ -173,7 +199,7 @@ class Project:
 
     # -- the hot path ----------------------------------------------------
     def inspect(self, image, source: str = "api", keep_images: bool = False,
-                tools=None) -> Dict[str, Any]:
+                tools=None, barcode=None) -> Dict[str, Any]:
         """`image` is either a single frame, or a dict of capture id to frame.
 
         Passing a single frame keeps every existing recipe working unchanged:
@@ -200,8 +226,13 @@ class Project:
             mm = float(cal.get("mm_per_px", 0.0))      # scale from the calibration
         ctx = Context(reference=self.reference, folder=self.folder, mm_per_px=mm,
                       want_records=keep_images)
+        if barcode:
+            # the code scanned for this part: checks set to compare with it
+            # read it from here (Settings > Barcode, tools/text.py)
+            ctx.share["barcode"] = str(barcode)
         results: List[ToolResult] = []
         aborted = None
+        barcode_ng = None
         missing = set()
 
         fixtures, by_id = {}, {}
@@ -265,12 +296,16 @@ class Project:
                 else:
                     r = tool.run(frame, ctx)
                     r = tool.correct_graphics(r, ctx)
+                    if getattr(self, "advanced", None) is not None:
+                        from vision_station.core import advanced
+                        r = advanced.apply(self, tool, r, frame, ctx)
                 if ctx.images:
                     # a processed image becomes readable by every later tool
                     for k, v in ctx.images.items():
                         frames.setdefault(k, v)
             except Exception as e:
                 r = ToolResult(tool.id, tool.type_name, "error", message=f"{type(e).__name__}: {e}")
+            _outline_and_caption(tool, r, ctx, reads_transformed)
             gopt = tool.p.get("graphics")
             if gopt:
                 r.graphics = filter_graphics(r.graphics, gopt)
@@ -295,12 +330,22 @@ class Project:
             if tool.type_name == "align" and r.status != "pass":
                 aborted = "alignment failed — remaining tools skipped"
                 break
+            # The part does not carry the code that was scanned: it is NG
+            # whatever else it looks like, and the rest is not inspected.
+            if (r.values or {}).get("barcode_match") is False:
+                barcode_ng = r.message or "Barcode not good"
+                aborted = "Barcode not good — remaining checks skipped"
+                break
 
+        from vision_station.tools import count as _count
+        _count.release_pictures()            # example pictures: decoded once per run
         crit_fail = [r for r in results
                      if r.status in ("fail", "error")
                      and next((t.critical for t in self.tools if t.id == r.tool_id), True)]
         noncrit = [r for r in results if r.status in ("fail", "error") and r not in crit_fail]
         verdict = "FAIL" if crit_fail else ("WARN" if noncrit else "PASS")
+        if barcode_ng:
+            verdict = "FAIL"                     # even from a check marked not critical
 
         return {
             "id": uuid.uuid4().hex[:12],
@@ -318,6 +363,7 @@ class Project:
             "total_ms": round((time.perf_counter() - t0) * 1000, 2),
             "image_size": [int(primary.shape[1]), int(primary.shape[0])],
             "aborted": aborted,
+            "barcode_ng": barcode_ng,
             "failed_tools": [r.tool_id for r in crit_fail],
             "tools": [r.to_dict() for r in results],
         }

@@ -1863,19 +1863,26 @@ def test_presence_on_a_textured_region_still_matches_patterns():
 
 
 def test_evaluation_counts_false_rejects_and_escapes(tmp_path):
-    """An NG that passes is an escape -- a bad part shipped. With a threshold
-    far too low the missing-label parts pass, and the report has to say so."""
+    """An OK that fails is a false reject, an NG that passes an escape. With a
+    threshold no part can reach, the good parts fail and the report has to
+    say so. A Part present check's own NG examples are rejected whatever its
+    threshold -- it learns from them -- so with a threshold that passes
+    everything they are still caught."""
     side, ref = _presence_side(tmp_path)
     side.add_training_image("label", ref, "ok")
     side.add_training_image("label", _surface_part(dx=6, dy=-4), "ok")
     side.add_training_image("label", _no_label(ref), "ng")
     side.add_training_image("label", _no_label(_surface_part(dx=-5, dy=3)), "ng")
     spec = [t for t in side.spec["tools"] if t["id"] == "label"][0]
-    spec["params"]["min_score"] = -1.0         # passes everything
+    spec["params"]["min_score"] = 2.0          # no part can reach it
     side.save(side.spec)
     ev = side.evaluate_tool("label")
-    assert ev["escapes"] == 2 and ev["false_rejects"] == 0
+    assert ev["false_rejects"] == 2 and ev["escapes"] == 0
     assert not ev["all_correct"]
+    spec["params"]["min_score"] = -1.0         # passes everything ...
+    side.save(side.spec)
+    ev = side.evaluate_tool("label")
+    assert ev["escapes"] == 0, "... but its own NG examples are still rejected"
 
 
 def test_tuning_sets_the_threshold_between_ok_and_ng(tmp_path):

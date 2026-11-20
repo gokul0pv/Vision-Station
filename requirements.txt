@@ -1,5 +1,8 @@
 # --- core ---
 PySide6>=6.6
+# the interface's icons: the Phosphor set (MIT) through QtAwesome (MIT); without
+# it the application falls back to its own drawn icons
+qtawesome>=1.3
 opencv-contrib-python==4.10.0.84
 numpy>=1.24,<2.2
 

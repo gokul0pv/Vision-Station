@@ -35,19 +35,39 @@ def wanted(cfg, verdict):
     return which == "all"
 
 
-def annotate(image, result, title="", labels="failed", banner=True):
+def annotate(image, result, title="", labels=True, banner=True):
     """The result page's picture: every check's graphics on the image."""
     from vision_station.core.vsruntime import draw
     return draw(image, result, banner=banner, title=title, labels=labels)
+
+
+DAY_FORMAT = "%Y-%m-%d"
+
+
+def day_folder(when=None):
+    """The name of the day's folder: 2026-11-19."""
+    return datetime.fromtimestamp(when or time.time()).strftime(DAY_FORMAT)
+
+
+def folder_for(cfg, when=None):
+    """Where a result's pictures go: always in the day's folder, and inside
+    it the part's own folder when it has one (its barcode):
+
+        <folder>/2026-11-19/                 parts without a barcode
+        <folder>/2026-11-19/FIC12345678/     each scanned part
+
+    One day's work is then one folder, whatever way the line runs."""
+    folder = os.path.join(cfg["folder"], day_folder(when))
+    if cfg.get("subfolder"):
+        folder = os.path.join(folder, cfg["subfolder"])
+    return folder
 
 
 def paths_for(cfg, job_name, verdict, when=None):
     """(annotated path, original path) for a result at time `when`."""
     when = when or time.time()
     dt = datetime.fromtimestamp(when)
-    folder = cfg["folder"]
-    if cfg.get("per_day", True):
-        folder = os.path.join(folder, dt.strftime("%Y-%m-%d"))
+    folder = folder_for(cfg, when)
     stem = "%s_%s_%s" % (dt.strftime("%H%M%S_%f")[:-3], _safe(job_name),
                          "ACCEPT" if verdict == "PASS" else "REJECT")
     ext = ".png" if cfg.get("format") == "png" else ".jpg"
@@ -64,7 +84,7 @@ def write(cfg, image, result, job_name, when=None):
         params = [int(cv2.IMWRITE_JPEG_QUALITY), int(cfg.get("quality", 97))]
     out = []
     if cfg.get("annotated", True):
-        pic = annotate(image, result, job_name, cfg.get("labels", "failed"),
+        pic = annotate(image, result, job_name, cfg.get("labels", True),
                        cfg.get("banner", True))
         if imio.imwrite(ann_path, pic, params):
             out.append(ann_path)
@@ -82,18 +102,30 @@ class ResultImageWriter:
         self.written = 0
         self.last_paths = []
         self.last_error = ""
+        # told the paths of every picture written (the Find picture index)
+        self.on_written = []
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def configure(self, cfg):
         self.cfg = dict(cfg or {})
+        # the OK / NG colours and line thickness chosen in Settings > Results
+        # apply to every result drawn -- on screen and in saved pictures
+        from vision_station.core import annotate as _look
+        _look.set_look(self.cfg.get("ok_colour"), self.cfg.get("ng_colour"),
+                       self.cfg.get("line_scale"))
 
-    def submit(self, image, result, job_name):
-        """From the window thread, once per result. Never blocks."""
-        cfg = self.cfg
+    def submit(self, image, result, job_name, cfg=None):
+        """From the window thread, once per result. Never blocks. cfg: this
+        result's own settings (a barcode's folder), else the configured ones.
+        The path the picture will be written to (the annotated one when it
+        is kept, else the original), or None when none is kept."""
+        cfg = self.cfg if cfg is None else cfg
         if image is None or not wanted(cfg, result.get("verdict")):
-            return False
-        item = (dict(cfg), image, result, job_name, time.time())
+            return None
+        when = time.time()
+        ann, orig = paths_for(cfg, job_name, result.get("verdict"), when)
+        item = (dict(cfg), image, result, job_name, when)
         try:
             self._q.put_nowait(item)
         except queue.Full:
@@ -106,7 +138,7 @@ class ResultImageWriter:
                 self._q.put_nowait(item)
             except queue.Full:
                 pass
-        return True
+        return ann if cfg.get("annotated", True) else orig
 
     def _run(self):
         while True:
@@ -115,6 +147,11 @@ class ResultImageWriter:
                 self.last_paths = write(cfg, image, result, job_name, when)
                 self.written += 1
                 self.last_error = ""
+                for fn in list(self.on_written):
+                    try:
+                        fn(self.last_paths)
+                    except Exception as e:
+                        print("[results] %s" % e)
             except Exception as e:                # saving must never stop the line
                 self.last_error = str(e)
                 print("[results] picture not saved: %s" % e)

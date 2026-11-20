@@ -36,6 +36,12 @@ import threading
 
 import numpy as np
 
+# DirectML runs one model at a time on the device: two sessions run from two
+# threads at once -- the live teach preview reading text while a run reads
+# text too -- crashed the process outright. Every DirectML session takes
+# this one lock; CPU and OpenVINO models keep their own.
+_DML_LOCK = threading.Lock()
+
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 
@@ -137,6 +143,8 @@ class Model:
             self._sess = ort.InferenceSession(path, opts, providers=providers)
             self.providers = self._sess.get_providers()
             self._in = self._sess.get_inputs()[0].name
+            if "DmlExecutionProvider" in self.providers:
+                self._lock = _DML_LOCK
 
     def _compile(self, shape):
         """OpenVINO compiles for a concrete input shape; recompile only when the

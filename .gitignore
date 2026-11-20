@@ -51,3 +51,13 @@ tests/testdata/real_led_band.png
 # Local pip wheels and generated output
 wheels/
 gallery/
+
+# Application build output (build_app.bat)
+build/
+dist/
+
+# the GPU training environment (PyTorch + Ultralytics), made by scripts/train_parts.py's instructions
+.venv-train/
+
+# YOLO base weights for training (scripts/train_parts.py downloads them)
+models/base/

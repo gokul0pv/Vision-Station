@@ -8,9 +8,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Run trained models on the GPU when one is usable (falls back to CPU).
-rem Delete this line on a line PC that should stay on the CPU.
-if not defined VS_DEVICE set VS_DEVICE=GPU
+rem GPU or CPU is chosen from this PC's graphics card when the application
+rem starts (vision_station\core\system_profile.py). To choose by hand:
+rem   set VS_DEVICE=GPU    or    set VS_DEVICE=CPU
 
 python -m vision_station
 if errorlevel 1 (

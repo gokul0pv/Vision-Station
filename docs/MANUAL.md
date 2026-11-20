@@ -266,14 +266,38 @@ projects\    one folder per model:
 
 ## Basler Pylon cameras
 
-GigE and USB3 Basler cameras are supported through the Pylon SDK. If pypylon is
-missing or no Basler camera is found, the app falls back to an OpenCV device so
-it still runs.
+GigE and USB3 Basler cameras are supported through pypylon, Basler's
+open-source Python package. Its wheel carries the complete pylon runtime
+(GigE and USB3 transport layers included), so **no Basler program needs to be
+installed** -- not the SDK, not Pylon Viewer. If pypylon is missing and no
+camera address is set, the app falls back to an OpenCV device so it still
+runs; with an address set it says why the Basler driver did not load.
 
 **Install**
 
-1. Pylon SDK from baslerweb.com (the SDK must come first)
-2. `pip install pypylon`
+`pip install pypylon` (the packaged VisionStation.exe carries its own copy).
+
+**"The camera is not accessible" from VisionStation.exe, fine from Python**
+
+A GigE camera sends its pictures as UDP packets to the program that asked,
+and Windows Firewall lets them in only for programs it has a rule for --
+per program file. On a network Windows calls *Public* (the camera port
+usually is), python.exe had been allowed when Windows first asked, but
+VisionStation.exe never was: the camera **opens** (its answers to the
+program's own requests pass) and **no picture ever arrives**. Nothing is
+holding the camera, so closing other programs does not help.
+Settings > Camera shows **Allow through Windows Firewall...** when this is
+the case (and the Run view offers it once when a camera gives no picture):
+one administrator prompt adds the rule for the program, and the camera works
+from then on. `VisionStation.exe --check` writes `logs\check.txt` with the
+driver's folder, the transport layers, the firewall rule and a real open and
+grab of the camera at the address in Settings.
+
+The build no longer copies the pylon SDK's libraries beside the program.
+With the SDK installed on the build PC, its version (12.3) went into the
+program's top folder beside pypylon's own (12.5); found first, they make
+pypylon's import fail ("The specified procedure could not be found"). The
+camera module also loads pypylon's own libraries first, by full path.
 
 **Settings: the camera is opened and set up here, not in Pylon Viewer**
 
@@ -346,9 +370,54 @@ Choose a folder, and every inspected part's picture is saved there: the
 and verdict, names and scores on the checks that failed (or on all, or none) --
 and, if wanted, the *original* picture exactly as the camera delivered it. Every
 part, rejected parts only, or accepted only; JPEG (quality 97 by default, about
-5 MB at 20 MP) or lossless PNG; a folder per day. File names carry the time, the
-inspection and ACCEPT/REJECT: `2026-11-17\143502_118_Top_REJECT.jpg`. Pictures
-are written on a background thread, so saving never lengthens an inspection.
+5 MB at 20 MP) or lossless PNG. **Every picture goes in the day's folder**, and
+a scanned part's in its barcode's folder inside it, so one day's work is one
+folder whichever way the line runs:
+
+    <folder>\2026-11-19\143502_118_Top_REJECT.jpg               no barcode
+    <folder>\2026-11-19\FIC12345678\143502_118_Top_REJECT.jpg   scanned part
+
+File names carry the time, the inspection and ACCEPT/REJECT. Pictures are
+written on a background thread, so saving never lengthens an inspection.
+
+**One folder.** Pictures are saved only in the folder chosen here. The
+results log of each job no longer keeps its own copy (it held 458 MB on one
+job in two days, beside the same pictures in the chosen folder): it records
+where each picture was saved. A barcode's folder is made inside the chosen
+folder; a barcode folder of its own, and the program's own `results` folder
+when none was chosen, are gone. No folder chosen: no picture is kept.
+
+**Result colours and lines.** OK and NG are drawn in the colours chosen under
+*Result colours and lines* -- on screen, in the result list and in saved
+pictures. Each picker is laid out like Windows' accent colours: recent
+colours, the 48 Windows colours, and *Custom colour* (solid colours only, no
+transparency). OK and NG can never share a colour: the one taken by OK is
+greyed out and struck through for NG, and the other way round. *Line
+thickness* (Thin x0.5 to Heavy x3) thickens or thins every check's outline;
+the words keep their size, and the verdict banner's words turn black on a
+light colour. Results on screen are redrawn at once; pictures already saved
+keep their colours.
+
+**Restore defaults.** Every Settings page has *Restore defaults* beside its
+title. It asks first, and keeps what says *where* things are, so a reset never
+cuts the line off: the camera's number and address, the light's COM port and
+channels, the picture folders, the scanner's connection, and the line
+connection's listening and port. Camera, Light, Results and Barcode change
+nothing until Apply or Done (Cancel keeps the old settings); General changes at
+once; Security's default is no supervisor password, and removing it asks for
+the password.
+
+**Find picture (Ctrl+F, the magnifier on the toolbar, Run > Find Picture)**
+
+Type or scan a barcode -- or part of one, a date, a job name -- and the
+pictures are listed as you type, newest first, the exact code first. The
+saved pictures are indexed in memory (the folders are walked once, in the
+background, and each new picture is added as it is written), so a search of a
+hundred thousand pictures answers each key press in milliseconds. Click a
+picture to see it; **double-click it, or press Show in folder**, and Explorer
+opens its folder with the picture selected. Enter after a scan shows the
+newest picture of that code; Enter again opens its folder. Filters: rejected
+or accepted only, and the untouched originals. Allowed in Operator Mode.
 
 **Full-quality display**
 
@@ -367,6 +436,17 @@ automatically -- the code checks which nodes your camera exposes. You do not
 need to know which family you own.
 
 ## Find parts (AI): every component found, not boxed one by one
+
+The panel's **Find** menu chooses what to look for and which check each kept box
+becomes: *Parts* (Part present checks), *Text -> Verify text (OCV)* or
+*Text -> Read text (OCR)*. In text mode every line of text in the area is read
+and listed: tick the lines to check, correct the text a Verify text check must
+read, name the check (`lot_code` gives `lot_code_01`). Every box - and the
+search area itself - can be **moved** (drag inside) and **resized** (drag an
+edge or a corner) on the picture; a resized text box is read again; a click
+keeps or drops a box. The panel stays open after *Add*, so parts and then text,
+or several areas, are added without starting over, each kept box as its own
+check.
 
 In a job editor, **Find parts (AI)** opens a panel beside the picture:
 
@@ -400,6 +480,408 @@ told from one big part by which side the network is surer of, bare board and
 the fixture beside the board left out. Model file: `models/parts/parts_yoloe26s.onnx`
 (47 MB). The weights are AGPL-3.0 (Ultralytics): fine for use in-house; selling
 a product with the model inside needs Ultralytics' licence.
+
+## Teaching: the teach picture, and what a drawn box becomes
+
+Every check is drawn on, and learns from, one picture: the job's **Teach
+picture** (its good reference). The picture selector over the image says
+which picture is showing:
+
+| Picture | What it shows | Boxes |
+|---|---|---|
+| Teach picture | the good part the checks compare with | drawn, moved and resized here |
+| Last inspection | the last part inspected | where each check *found* its part |
+| Next picture | the image the next run will inspect | editable only when it is the teach picture |
+
+Why: a check's box is stored in teach-picture coordinates, and Part present
+compares the part under it with the teach picture. Drawn on the last
+inspection's picture of a board lying 60 px further along, a second part was
+taught from the wrong place of the teach picture and failed the moment it was
+drawn; and boxes drawn over a moved board sat 60 px off their parts while the
+true result outlines were hidden beneath them. Now choosing a check in the
+list shows the Teach picture; picking up a drawing tool on another picture
+switches to it; and on the last inspection a note says so, with a button back.
+
+- **Adding a check means drawing it.** Choose a check (Add a check, the Add
+  Tool menu, the picker or the Toolbox) and the pointer becomes a cross: drag
+  its area anywhere on the picture -- E for an ellipse or circle, P for a
+  polygon; Esc or the pointer tool cancels. It used to appear as a box in the
+  middle of the picture that had to be dragged into place every time. Checks
+  with no area of their own (Distance, Image processing, Data analysis...)
+  are added at once.
+- **Every check's result, live.** While a job is edited, it is run on its own
+  teach picture in the background each time something changes, and every
+  check shows what it gives there -- its tag on its box, OK / NG in the list,
+  the result under Properties -- without pressing Run, as the Find parts
+  panel shows what it reads while its boxes move. Never counted, logged or
+  saved. (DirectML runs one model at a time: the preview and a run reading
+  text at the same moment crashed the program, so GPU models now take turns.)
+- **A deleted check leaves nothing behind.** Its last result outline stayed
+  on the picture until the next run.
+- **Find parts panel**: a click anywhere on a row keeps or drops it (a blue
+  tick, or greyed and struck through); double-click edits the text or name.
+- **One threshold for a whole kind of part.** In Find parts each kind found
+  (A x 13, B x 9...) has a **Threshold** column: every check added for it gets
+  that accept threshold (text checks get one *Reading confidence*). Each check
+  remembers its group -- the name given to its kind, e.g. `inductor`; checks
+  added earlier are grouped by their name without the number (`inductor_07`
+  is in `inductor`). Select any one of them in the editor and a **group bar**
+  appears above its settings: *Accept threshold for all 13* (one change, one
+  Ctrl+Z), the lowest score the group got on the last run and how many
+  failed, *Select all on the picture*, and *Run them* to turn the whole group
+  on or off. Select several boxes on the picture (drag a marquee, or
+  Shift-click) and the same bar works on exactly those.
+- **Part present learns from its Train tab.** Its OK and NG pictures used to
+  serve only *Test* and *Tune threshold*: a picture added under NG -- even the
+  reference itself -- still passed. Now the check decides with them. Each
+  example is looked for in the check's search window, as the reference is:
+  - a part that is clearly more like an NG example than like the reference
+    or any OK example is **NG** ("looks like NG example ...");
+  - the very picture an NG example was made from (or a still re-shot of it)
+    is **NG** ("this is the picture of NG example ...") -- the whole picture
+    alike at 64 x 48 and the check's region alike pixel for pixel, so a board
+    with only this part missing is not mistaken for it;
+  - an OK example counts as one more good reference, so an accepted variant
+    passes even where it differs from the reference.
+
+  Labelling a picture of a good part NG rejects only that picture: every
+  other good board is as like it as the reference is. The Train tab says so
+  when an NG example looks just like the reference. To reject a fault on
+  every board, add pictures of the fault itself. Adding or moving an example
+  updates the live results at once.
+- **Read text that expects nothing passes anything.** A Read text check only
+  fails when nothing can be read: a marker scribble over "R15" was read as "D"
+  and passed, and so did a wrong "R16" read as "R1". Read text checks made in
+  Find text now expect the text they read there (*Must contain*; clear it for
+  text that changes from part to part, such as a serial number). For checks
+  made before, the group bar's **Expect what each reads now** makes every
+  text check of the group expect what it reads on the teach picture. A failed
+  text check is labelled beside its box with what was read and what was
+  expected -- "NG read: D / expected: R15", "NG nothing read / expected: R15"
+  -- and the lines it read are drawn red, not blue. Use Verify text for fixed
+  markings: it always compares with its expected text.
+- **Long jobs stay readable.** A *Filter checks* box over the list (from six
+  checks) finds one by name or kind; the setup guide shrinks to its current
+  step once there are checks; with more than three boxes selected their names
+  and sizes are not drawn on each; and in the Run view, with more than twelve
+  checks, only failures are labelled -- 41 "OK" tags hid the two "NG" ones.
+  Every outline is still drawn, blue or red.
+- **After a run, the list shows the run.** The live teach-picture results are
+  shown only for changes made since the last run; one that came back late
+  showed the teach picture's OK beside the run's NG.
+- **A drawn box asks what it is for.** Drag a box (or ellipse, or polygon) and
+  a menu beside it offers Part present, Verify text, Read text, Read code,
+  Count by shape, Measure length, Colour match, Dents and scratches, *More
+  checks...*, and *Move <selected check> here*. Drawing never moves the
+  selected check by itself any more -- that is what made "the second part I
+  draw is NG at once". Dismiss the menu and the box stays (dashed) for the next
+  check added from the toolbar.
+- **Verify text learns its text.** When its box is set, the check reads the
+  box on the teach picture and expects the clearest whole line in it --
+  fragments cut by the box's edge and single characters are passed over. The
+  status bar says what it learned; type over it under Settings and it is
+  yours (it is never replaced). Look-alike characters -- O/0, I/1, S/5, B/8,
+  Z/2 -- match each other by default (*Look-alike characters match*), so a
+  fraction-of-a-pixel shift that reads C01 as CO1 is not a reject.
+- **Teach on another picture**: *Good reference > Use the picture on screen*
+  on the last inspection makes that picture the teach picture. If the fixture
+  found the part moved, every box moves with it (by the transform it found),
+  so each stays on its feature.
+
+### Compare barcode with barcode scanned
+
+*Read text* and *Read code* have a box **Compare barcode with barcode
+scanned** (off by default). With it ticked **and** the barcode check on in
+Settings, what the check reads on the part must be the code that was
+scanned: a match, and the rest of the inspection runs; no match, and the
+part is **NG - Barcode not good** (scanned and read codes in the message, on
+the job's tile and on the barcode bar) and its other checks are skipped,
+even when the check is marked not critical. Read text matches when what it
+reads contains the code (a label may print *S/N* around it), spaces and
+capitals not counting, O/0 and I/1 alike; Read code must decode the code
+itself, letter for letter. With the box ticked but the barcode check off in
+Settings, the check reads as it always did; with the barcode check on and
+no box ticked, only the scanned code is checked against the rule (starts
+with, length) before the camera takes the picture. **Ticking the box moves
+the check to just after the fixture**, so the barcode is the first thing
+checked and is found there in the list.
+
+## New application or job: a file, or the AI reference image
+
+After its name, a new application (File > New Application) or job (Add
+Job) asks where the picture of a good part comes from: **Browse for a
+picture file**, or **AI reference image from the camera** -- the light set
+by the AI to its clearest level (when Vision Station controls the light;
+otherwise the picture as the camera sees it, and it says so), the picture
+taken at that level, and the job made to take its pictures from the camera
+at that level. Cancelled, stopped, or with no picture from the camera,
+nothing is created. The AI picture is no longer in the Good reference menu.
+
+## Repeatable text results: one part, one answer
+
+Two pictures of a part that has not moved are never the same: sensor noise,
+and the fixture finding it a fraction of a pixel apart. On a real board (41
+text checks round markings of about 55 px) that was enough to change what the
+reader saw in the margins of a region: the edge of the next part read as a
+'P' joined to the print (`PR15`), a pad's corner as `R15 D`, a sliver of a
+round pad as a second line (`451 A`), a glint on a 1 as `RiS`. Three frames
+in ten of one unmoved part failed a check.
+
+What the reader does now:
+
+- **Stray fragments are dropped**: a line of one or two characters under half
+  the height of the region's main print. Measured: real print read at 0.96
+  confidence or better and was the tallest line; strays had median confidence
+  0.31 and 0.27 of its height.
+- **Stray end letters give a second reading**: characters at either end read
+  under 0.85 confidence beside print read at 0.95 or better are offered as a
+  second reading (`PR15` -> `R15`) when verifying against an expected text --
+  never removed from what was read, because a faint first letter looks the
+  same (trimming in place turned `451` into `51` once in twenty frames). A
+  good part matches either reading; a wrong marking matches neither (0 false
+  accepts in 450 tries with R16, R10, R150, 15...).
+- **Look-alikes** now include the small letters: `i` for 1, `s` for 5, `z`
+  for 2.
+- *Ignore stray marks* (`ignore_stray_marks`, on by default) switches it off
+  per check.
+
+Result on that board, 20 frames with stronger noise than the camera's: 19 of
+20 pass, against 7 of 10 before. The one left is a region drawn over the next
+part, which reads as a confident letter: **draw text regions round the print
+with a little background, not over neighbouring parts.**
+
+## Barcode check: inspect only after a valid scan
+
+Settings > **Barcode** (or the barcode button on the toolbar) switches it on
+and sets the rule:
+
+- **Starts with** -- e.g. `FIC`; **Length** -- the whole code, e.g. 11. So
+  `FIC12345678` passes; `FIC1234` (7 characters) and `ABC12345678` are refused,
+  with the reason on screen. Capitals match unless *Capital letters must match*
+  is on. *Try a code* tests the rule as you type.
+- **Scanner**: a USB scanner in keyboard mode needs nothing -- in the Run view
+  its keys go to the barcode bar even if you last clicked the picture or the
+  queue -- or a **serial (COM) port** and its speed.
+- **Folder**: each part's result pictures go in `<folder>\<date>\<barcode>\`
+  (default: the result pictures folder, else `results` beside the program),
+  every picture of that part, accepted or rejected. Find picture (Ctrl+F)
+  finds them by code.
+
+When it is on, the Run view shows a barcode bar under the verdict. Scan the
+part: a valid code starts the inspection at once (or waits for Run, if
+*Inspect as soon as a valid code is scanned* is off); a wrong code is refused
+with a beep and starts nothing; Run without a scan says *Scan the barcode
+first*. A code scanned during an inspection is kept for the next part.
+Continuous mode waits for each part's scan. The results queue gets a Barcode
+column, and the bar links to the part's folder. The line can send the code too:
+`CODE FIC12345678` -> `CODE OK FIC12345678` | `CODE NG <reason>`, then
+`TRIGGER`; a `TRIGGER` with no code waiting is answered `ERROR scan the barcode
+first`. Runs from a job editor, while teaching, are never held for a barcode.
+Switched off, everything works as before.
+
+## The external light (Settings > Light)
+
+A light controller on a serial (RS232) port is switched and dimmed by Vision
+Station. Supported: HIFLY DCS controllers and others speaking the same ASCII
+protocol (OPT's): 9600 baud, `$` + command + channel + 3 hex digits + XOR
+checksum -- on, off, set brightness 0-255, read brightness. Measured on a
+HIFLY DCS2-1C200W-24PS on COM7: on/off keep the brightness; a brightness sent
+while the light is off leaves it off; the frame after "on" is fully lit. The
+DCS3's trigger, pulse-width and auto-detect commands get no answer on the DCS2.
+
+- **Control the light from Vision Station**, the **serial port** (*Find* asks
+  every port with a brightness read -- nothing is switched) and the number of
+  **channels**. *Light on* / *Light off* try it.
+- **Always on**: on for as long as Vision Station runs. **Off**: the light is
+  off, and on only while a Run takes its picture from the camera (a job whose
+  image source is the camera), for the whole of a continuous run, and while
+  Live Camera is open for aiming. Runs on stored pictures leave it off.
+- **Light on before the picture** (150 ms) and **Keep on after the picture**
+  (300 ms): the light settles before the camera's picture is taken and stays
+  on a while after. Each run holds the light under its own name, so a late
+  "off" of one run never puts the light out under the next run's picture.
+  The acA5472-5gc has a rolling shutter: the frame being read out when the
+  light switches is lit in one part and dark in the rest; the grab only uses
+  frames exposed after the light came on.
+- **The camera's white balance is held when the light is switched.** Balancing
+  continuously, the camera kept re-balancing on a black picture between runs,
+  and each run's picture came out at a different brightness (0.29-0.59 grey
+  against 0.43 with the light left on). With Always on off, Vision Station
+  balances white once with the light on and keeps it (Settings > Camera then
+  shows automatic white balance off). Since: every run's picture 0.450,
+  the same as with the light left on.
+- **Brightness**: a slider and a box per channel, 0-255; the light follows as
+  you drag or type. Off: the controller's own panel setting is left alone.
+- **Automatic brightness**: *Adjust automatically on every run* -- each part's
+  picture sets the light for the next (proportional, at most 35 % per part, a
+  6 % dead band so it does not hunt) -- and *Make pictures as bright as* the
+  **teach picture** or **a brightness you choose** (slider and box, % grey).
+  **Adjust now** finds the level once from the camera (a binary search, one
+  fresh picture per try, about 4 s). Burnt-out white turns the light down; a
+  teach picture that is itself partly white (shiny parts) sets how much is
+  allowed. Measured on the line: 45 % -> 40 -> 37 -> 36 % aiming at 35 %, then
+  steady. The level found is kept as the starting level.
+- **The best light for a teach picture** (File > New Application or Add
+  Job > *AI reference image from the camera*): with the good part under the
+  camera, the light is tried at 7 levels and each picture judged by
+  measurement (detail, burnt-out white, crushed black) and by the
+  application's AI (the part finder: components
+  found, weighted by its confidence; the text reader: characters read,
+  weighted by its confidence). Each measure is smoothed along the levels, and
+  of the levels within 3 % of the best score the brightest is taken, below
+  full power where that is as good, so Keep adjusted can still raise the
+  light later. The teach picture is then taken at that level, and the level
+  is kept with the job (`light_level` in its recipe): **every run of that job
+  takes its picture at its own level**. About 35 s with the AI on the GPU;
+  Stop keeps the old teach picture. Keep adjusted then corrects each job's
+  own level, aiming at its own teach picture.
+- **The camera's automatic exposure and gain are switched off while Vision
+  Station controls the light**, at the camera's manual values (Settings >
+  Camera), and it says so. Left on, they undid every change of the light:
+  one light level gave pictures 0.29, 0.44 and 0.88 grey, the AI chose a
+  level from pictures the camera had already corrected, and Keep adjusted
+  chased the camera. Held off, the picture rises steadily with the level
+  (0.16 at 32 to 0.45 at 255) and a run matches its teach picture exactly.
+- **White is balanced under the lit light.** A colour camera with its colour
+  gains at 1 shows a white light as strongly green (blue 41.7, green 100.4,
+  red 22.4 on a grey part); balanced in the dark it turns pink. With the
+  light switched, and when the AI reference image is taken, the camera's
+  white is balanced once with the light on at a moderate level (96), then
+  held (continuous balance off), so it cannot drift in the dark between
+  runs. On the line: blue 171, green 175, red 176 on a grey part -- a true
+  colour picture (red gain 2.8, blue 1.7).
+- **Shiny parts**: the board's metal cages reflect the light to white at every
+  level (5-8 % of the picture). Up to 10 % burnt-out white costs nothing;
+  more turns the choice down. The text reader carries most weight in the
+  choice (50 %), then measured detail (30 %), then the part finder (20 %),
+  which reports the most components in the darkest pictures.
+- **Black and white** (`image_source.mono`, one colour channel) remains for a
+  job set so by hand. It is never chosen automatically: an earlier version
+  took the raw green of a white light for a green light and taught jobs in
+  black and white.
+- **When Vision Station is not running** the controller works on its own:
+  closing hands it back as it was found -- its own brightness, light on.
+  The setting it was found at is kept in the settings until it is handed
+  back: a session that is killed (VS Code's Stop, Task Manager) cannot hand
+  it back, and the controller keeps any brightness it was given -- the next
+  session then took the killed one's 224 for the controller's own and handed
+  back 224 with the light on, though the operator had left it at 0. Now the
+  next session hands back the saved setting. Closing the terminal the
+  program runs in (its X, Ctrl+C, Ctrl+Break, log-off) hands the light back
+  first; measured: a session at 200 broken with Ctrl+Break left the light at
+  its own 64. A
+  controller that stops answering never stops an inspection; the connection
+  is tried again a few seconds later and the error is shown here.
+
+## This PC: models and settings chosen from its hardware
+
+When the application starts it looks at the PC once
+(`vision_station/core/system_profile.py`) -- processor, memory, graphics
+card and its own memory, the NVIDIA driver -- and chooses from that; Settings
+> General and `--check` show what it found and chose. Setting `VS_DEVICE=GPU`
+or `CPU` by hand still decides.
+
+| Part | Chosen from |
+|---|---|
+| Networks (text reading, Find parts, Trained surface, YOLO, Classify) | the GPU when a GPU runtime is installed and the card has 2 GB of its own or more; else the processor |
+| Text-reading models | medium on a GPU with 6 GB or more (when present); on the processor the smallest first |
+| Training a part detector | an NVIDIA card with 4 GB or more and driver R570+ (CUDA 12.8): YOLO11 small at batch 4 with 8 GB, nano with less |
+
+**Minimum and recommended**
+
+| For | Minimum | Recommended |
+|---|---|---|
+| Everything, on the processor | Windows 10/11 64-bit, 4 cores, 8 GB | 8 cores, 16 GB (a 20 MP picture is 60 MB) |
+| Networks on the GPU | any DirectX 12 card, 2 GB of its own | 4 GB or more |
+| Training the part detector | NVIDIA, 4 GB, driver R570+ | NVIDIA, 8 GB (the line's RTX 5060) |
+
+Without an NVIDIA card a part detector is trained on a PC that has one, and
+`models/parts/parts_trained.onnx` copied across.
+
+## A part detector trained on the board (scripts/train_parts.py)
+
+The general Find parts network was never taught what a component is: on twelve
+pictures of one unmoved board it reported 243 to 257 parts. A YOLO11 detector
+is trained on the board itself, on this PC's GPU:
+
+    python scripts/train_parts.py capture local\parts_ds
+    python scripts/train_parts.py label   local\parts_ds
+    C:\Users\ADMIN\vision-station-train\Scripts\python scripts/train_parts.py train local\parts_ds
+    python scripts/train_parts.py compare local\parts_ds
+
+*capture* takes pictures at three light levels (the camera's automatic
+exposure and gain off); *label* runs the general finder on every picture and
+keeps the parts found in at least 60 % of them, at their median box -- what
+flickers is what is trained away (242 parts on the line's board) -- and cuts
+tiles at the finder's three zooms; *train* runs Ultralytics in its own
+environment `C:\Users\ADMIN\vision-station-train` -- outside the project:
+made inside it, VS Code took it for the project's Python and the program
+would not start -- (PyTorch with CUDA 12.8; kept apart so it cannot
+disturb the application's onnxruntime-directml and OpenCV), one class, input
+1280, and exports `models/parts/parts_trained.onnx`; *compare* measures both
+models' repeatability on fresh pictures. Find parts uses the trained model
+whenever it is there, and says which model it uses.
+
+## The run view and speed
+
+- Every inspection is shown whole: a tile zoomed into once kept that zoom, and
+  every later part was shown cut off. Result tags are drawn larger there, to
+  be read from a step away.
+- A 36-check cycle on the 20-megapixel board went from about 1 000 ms to about
+  600 ms: the results queue keeps a 1600-pixel preview instead of re-encoding
+  every full frame as JPEG on the window's thread (220 ms) and decoding it
+  again (100 ms); Part present converts only its own region to grey, not the
+  whole reference for every check (2-3 ms each). Reading a PNG from disk is
+  about 130 ms of what remains; a camera does not pay it.
+
+## The look
+
+Icons are the **Phosphor** set (MIT licence) through **QtAwesome** (MIT
+licence) -- one current family of line icons for every action and tool; the
+application falls back to its own drawn icons if QtAwesome is not installed
+(`VS_ICONS=drawn` forces them). On the picture, the selection is violet --
+blue is OK, red NG and orange a warning, so the selection takes the one
+colour no result uses -- with round corner handles and pill-shaped edge
+handles. The checks list shows each check's icon on a tinted tile and its last
+result as an OK / NG pill. Licences: `assets/licenses/THIRD-PARTY.txt`.
+
+Result tags on the picture grow and shrink with the zoom between 9 and 24
+screen pixels (13 and 30 in the Run view).
+
+## Vision Glass: a liquid-glass front end in HTML, CSS and JavaScript
+
+`run_glass.bat` (or `python -m vision_station.glass`) opens **Vision Glass**,
+a second front end written as a web page -- HTML, CSS and plain JavaScript in
+`vision_station/glass/web/`, no build step -- over the same engine, projects,
+image sources, cameras, barcode rule, result pictures and results database as
+Vision Station. `vision_station/glass/server.py` serves it on 127.0.0.1 only;
+it opens in its own window (Qt WebEngine's Chromium), or in the default
+browser with `--browser` or where Qt WebEngine is missing. It is not part of
+the packaged application, and Vision Station (`run.bat`) does not change.
+
+The look is liquid glass after macOS 26: translucent layers that blur,
+brighten and -- through an SVG displacement map -- bend what is behind them
+at the edges, lit along the rim; glass only on what floats (sidebar, toolbar
+capsule, controls, menus, sheets), calmer surfaces under the pictures;
+SF Pro where the system has it, else Inter; glass dropdowns, switches whose
+knob stretches as it moves, a segmented control with a sliding thumb,
+toasts, sheets; light, dark or following Windows, and *Reduce transparency*.
+
+- **Run**: the verdict, a tile per job with its last picture and every
+  check's outline (only failures labelled when there are more than twelve),
+  the barcode bar when the rule is on, the results list, Continuous.
+- **Build**: the teach picture -- zoom with the wheel, pan by dragging empty
+  space, Space or the hand; select, move and resize boxes; draw a box (R) or
+  an ellipse (E) and pick its check from the menu beside it, or *Add* a check
+  and draw it; every check's live result on the teach picture; settings with
+  sliders, switches and dropdowns; the group bar for a kind of part; Find
+  parts / Verify text / Read text; undo (Ctrl+Z); delete (Del); teach on the
+  last part.
+- **History**, and **Settings**: the image source, the barcode rule,
+  appearance.
+
+A view can be opened from the address, e.g. `#view=build&theme=dark&select=ocv`
+-- how its screenshots are made.
 
 ## Rotated regions
 

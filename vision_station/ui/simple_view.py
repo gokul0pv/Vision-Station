@@ -473,7 +473,15 @@ class GuidePanel(QFrame):
         done = [True, has_locate, n_checks > 0, result is not None,
                 result is not None and not dirty]
         current = next((i for i, d in enumerate(done) if not d), None)
+        # Once there are checks the five steps shrink to the one in hand:
+        # the list of checks below needs the room -- forty from Find parts
+        # showed three rows at a time.
+        compact = n_checks > 0
+        self.title.setText("Setting up: step %d of 5" % (current + 1)
+                           if compact and current is not None else
+                           "Inspection set up" if compact else "Setting up this inspection")
         for i, r in enumerate(self.rows):
+            r.setVisible(not compact or i == current)
             name = self.STEPS[i][0]
             if done[i]:
                 r.setText("✓   %s" % name)

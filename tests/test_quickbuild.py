@@ -81,7 +81,7 @@ def test_run_once_fills_status_queue_and_records(qb):
     assert qb.jobs.topLevelItem(0).text(1) in ("Accept", "Reject")
     te = qb.open_tool_edit(_pid(qb), "lot_code")
     recs = [te.display.record.itemText(i) for i in range(te.display.record.count())]
-    assert recs[:2] == ["Current.InputImage", "LastRun.InputImage"]
+    assert recs[:3] == ["Reference", "Current.InputImage", "LastRun.InputImage"]
     assert te.sTime.text().startswith("Tool ") and "Total" in te.sTime.text()
 
 
@@ -135,17 +135,19 @@ def test_image_processing_tool_offers_its_output_record(qb):
     assert "LastRun.OutputImage" in recs
 
 
-def test_job_editor_shows_last_run_but_keeps_the_operators_choice(qb):
+def test_job_editor_shows_the_teach_picture_but_keeps_the_operators_choice(qb):
+    """A check chosen in the list is shown on the picture it is drawn and
+    taught on; a new run does not override the picture the operator chose."""
     _run(qb)
     je = qb.open_job_editor(_pid(qb))
     je.tree.setCurrentItem(je.tree.topLevelItem(2))
-    assert je.display.current_record() == "LastRun.InputImage"
-    je.display.record.setCurrentText("Current.InputImage")
+    assert je.display.current_record() == "Reference"
+    je.display.record.setCurrentText("LastRun.InputImage")
     _run(qb)
-    assert je.display.current_record() == "Current.InputImage", \
+    assert je.display.current_record() == "LastRun.InputImage", \
         "a new run overrode the record the operator picked"
     je.tree.setCurrentItem(je.tree.topLevelItem(3))
-    assert je.display.current_record() == "LastRun.InputImage"
+    assert je.display.current_record() == "Reference"
 
 
 def test_job_editor_shows_terminals(qb):
@@ -791,13 +793,17 @@ def test_undo_is_locked_for_operators(qb):
 # ------------------------------------------------------------- results log
 def test_every_inspection_is_logged_and_survives_reopening(qb, tmp_path):
     """The on-screen queue holds 32 runs and is gone when the application
-    closes; the log keeps every inspection, with images of rejects."""
+    closes; the log keeps every inspection, with where each picture was saved
+    -- in the one folder of Settings > Results, no second copy of its own."""
     pid = _pid(qb)
     good = os.path.join(HERE, "projects", "demo_led_panel", "good.png")
     bad = os.path.join(HERE, "projects", "demo_led_panel", "bad.png")
+    pics = str(tmp_path / "pictures")
+    qb.station.result_images.configure({"folder": pics, "which": "fail", "annotated": True})
     qb.station.sources[pid].use_files([good, bad, good])
     for _ in range(3):
         _run(qb)
+    qb.station.result_images.flush()
     folder = qb.station.projects[pid].folder
     qb.open_application(qb.station.app_id)            # closes and reopens the logs
     from vision_station.core.results import ResultStore
@@ -806,10 +812,14 @@ def test_every_inspection_is_logged_and_survives_reopening(qb, tmp_path):
     assert (sm["total"], sm["passed"]) == (3, 2), sm
     runs = lg.recent()
     rejects = [r for r in runs if r["verdict"] != "PASS"]
-    assert len(rejects) == 1 and rejects[0]["image_path"], "the reject's image was not archived"
-    assert os.path.exists(os.path.join(folder, rejects[0]["image_path"]))
+    assert len(rejects) == 1 and rejects[0]["image_path"], "the reject's picture not recorded"
+    assert rejects[0]["image_path"].startswith(pics), "recorded somewhere else"
+    assert os.path.exists(rejects[0]["image_path"])
     assert not [r for r in runs if r["verdict"] == "PASS" and r["image_path"]], \
-        "passing parts were archived under the default policy"
+        "passing parts' pictures were saved with Save: rejected parts only"
+    import glob as _glob
+    assert not _glob.glob(os.path.join(folder, "results", "images", "**", "*.jpg"),
+                          recursive=True), "a second copy kept in the job's folder"
     lg.close()
 
 

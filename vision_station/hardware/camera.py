@@ -42,16 +42,57 @@ import time
 import cv2
 import numpy as np
 
+def _load_pypylons_own_runtime():
+    """pypylon brings the whole pylon runtime in its own folder -- no Basler
+    program needs to be installed. But Windows loads a library by name, and
+    another copy of the same name found first wins: the pylon SDK's (on
+    PATH), or one PyInstaller copied beside the .exe. A different version
+    makes pypylon's import fail with "The specified procedure could not be
+    found" -- the packaged application then saw no camera while the same code
+    run from Python opened it. Loading pypylon's own copies first, by their
+    full paths, makes every later lookup of those names find them."""
+    import importlib.util
+    import sys
+    try:
+        spec = importlib.util.find_spec("pypylon")
+    except Exception:
+        return
+    if spec is None or not spec.submodule_search_locations:
+        return
+    here = list(spec.submodule_search_locations)[0]
+    if sys.platform != "win32" or not os.path.isdir(here):
+        return
+    try:
+        os.add_dll_directory(here)
+    except (OSError, AttributeError):
+        pass
+    import ctypes
+    import glob
+    # the GenICam base first, then what is built on it, then pylon itself
+    order = ("GCBase_*", "Log_*", "log4cpp*", "MathParser_*", "XmlParser_*",
+             "NodeMapData_*", "GenApi_*", "PylonBase_*", "PylonUtility_*")
+    for pat in order:
+        for dll in sorted(glob.glob(os.path.join(here, pat + ".dll"))):
+            try:
+                ctypes.WinDLL(dll)
+            except OSError:
+                pass
+
+
+PYLON_ERROR = ""                     # why pypylon did not load, for the user
 try:
+    _load_pypylons_own_runtime()
     from pypylon import pylon
     PYLON_AVAILABLE = True
-except Exception:
+except Exception as _e:
     # Not only ImportError: a pypylon whose SDK libraries are missing or
     # mismatched fails part-way through its own import with AttributeError or
     # OSError, and the application then did not start at all instead of
-    # falling back to an ordinary camera.
+    # falling back to an ordinary camera. The reason is kept: falling back
+    # without a word left "the camera is not accessible" unexplained.
     pylon = None
     PYLON_AVAILABLE = False
+    PYLON_ERROR = "%s: %s" % (type(_e).__name__, str(_e).splitlines()[0] if str(_e) else "")
 
 
 class CameraError(Exception):
@@ -103,6 +144,10 @@ class CameraSettings:
         self.packet_size = 0           # GigE packet size (bytes); 0 = leave
         self.inter_packet_delay = 0    # GigE inter-packet delay (ticks)
         self.heartbeat_ms = 0          # GigE heartbeat; 0 = leave (3000)
+        # Every colour at gain 1, held. Not set by the application: at gain 1
+        # this camera shows a white light as strongly green. A setting for a
+        # job that works in black and white from one colour.
+        self.neutral_balance = False
 
     def copy(self):
         c = CameraSettings()
@@ -243,6 +288,8 @@ def who_holds_camera():
                 out.append("another Vision Station (process %d)" % p.info["pid"])
             elif "ipconfigurator" in name or "pylonipconfig" in name:
                 out.append("pylon IP Configurator (process %d)" % p.info["pid"])
+            elif name.startswith("mvs") or "machine vision software" in cmd:
+                out.append("MVS (process %d)" % p.info["pid"])
         except Exception:
             continue
     return out
@@ -495,8 +542,29 @@ class PylonCamera:
 
     def _apply_white_balance(self, s):
         auto = self._first_node(["BalanceWhiteAuto"])
+        if getattr(s, "neutral_balance", False):
+            self.set_neutral_balance()
+            return
         if auto is not None:
             auto.SetValue("Continuous" if s.auto_white_balance else "Off")
+
+    def set_neutral_balance(self):
+        """Automatic balance off and red, green and blue at gain 1 (or the
+        nearest the camera allows). True when the camera has the nodes."""
+        auto = self._first_node(["BalanceWhiteAuto"])
+        if auto is not None:
+            auto.SetValue("Off")
+        sel = self._first_node(["BalanceRatioSelector"])
+        ratio = self._first_node(["BalanceRatioAbs", "BalanceRatio"])
+        if sel is None or ratio is None:
+            return False
+        for colour in ("Red", "Green", "Blue"):
+            try:
+                sel.SetValue(colour)
+                ratio.SetValue(max(ratio.GetMin(), min(ratio.GetMax(), 1.0)))
+            except Exception:
+                continue
+        return True
 
     def white_balance_once(self):
         """Balance white once on what the camera sees now, then hold it."""
@@ -622,6 +690,76 @@ class PylonCamera:
         except Exception as e:
             print(f"[camera] heartbeat not applied: {e}")
 
+    # -- the camera's own IP settings -------------------------------------
+    @staticmethod
+    def _dotted(v):
+        v = int(v)
+        return ".".join(str((v >> s) & 255) for s in (24, 16, 8, 0))
+
+    @staticmethod
+    def _packed(dotted):
+        a = [int(x) for x in dotted.split(".")]
+        return (a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]
+
+    def ip_config(self):
+        """The camera's address now and the one it keeps across a restart:
+        {current_ip, current_mask, current_gateway, stored_ip, stored_mask,
+        stored_gateway, stored_on} or None for a camera without them (USB).
+        A camera whose stored mask or address does not match the network
+        comes back after a power cycle where the PC cannot reach it -- what
+        a temporary IP from pylon IP Configurator only papers over."""
+        nm = self.cam.GetNodeMap()
+
+        def val(name):
+            n = nm.GetNode(name)
+            try:
+                return n.GetValue() if n is not None else None
+            except Exception:
+                return None
+        cur = val("GevCurrentIPAddress")
+        if cur is None:
+            return None
+        cfg = val("GevCurrentIPConfiguration")
+        on = val("GevCurrentIPConfigurationPersistentIP")
+        if on is None and cfg is not None:
+            on = bool(int(cfg) & 0x1)
+        out = {"current_ip": self._dotted(cur),
+               "current_mask": self._dotted(val("GevCurrentSubnetMask") or 0),
+               "current_gateway": self._dotted(val("GevCurrentDefaultGateway") or 0),
+               "stored_ip": self._dotted(val("GevPersistentIPAddress") or 0),
+               "stored_mask": self._dotted(val("GevPersistentSubnetMask") or 0),
+               "stored_gateway": self._dotted(val("GevPersistentDefaultGateway") or 0),
+               "stored_on": bool(on)}
+        out["keeps_current"] = (out["stored_on"] and out["stored_ip"] == out["current_ip"]
+                                and out["stored_mask"] == out["current_mask"])
+        return out
+
+    def store_ip(self, ip=None, mask=None, gateway=None):
+        """Store an address in the camera so it comes back with it after a
+        power cycle -- by default the address it has now. Returns ip_config()."""
+        now = self.ip_config()
+        if now is None:
+            raise CameraError("this camera has no IP settings to keep")
+        nm = self.cam.GetNodeMap()
+        for name, v in (("GevPersistentIPAddress", ip or now["current_ip"]),
+                        ("GevPersistentSubnetMask", mask or now["current_mask"]),
+                        ("GevPersistentDefaultGateway", gateway or now["current_gateway"])):
+            node = nm.GetNode(name)
+            if node is None:
+                raise CameraError("the camera has no %s setting" % name)
+            node.SetValue(self._packed(v))
+        flag = nm.GetNode("GevCurrentIPConfigurationPersistentIP")
+        try:
+            if flag is not None and flag.IsWritable():
+                flag.SetValue(True)
+            else:
+                cfg = nm.GetNode("GevCurrentIPConfiguration")
+                if cfg is not None and cfg.IsWritable():
+                    cfg.SetValue(int(cfg.GetValue()) | 0x1)
+        except Exception as e:
+            print("[camera] permanent-IP switch not set: %s" % e)
+        return self.ip_config()
+
     def exposure_range_us(self):
         node = self._first_node(["ExposureTime", "ExposureTimeAbs"])
         return (node.GetMin(), node.GetMax()) if node else (None, None)
@@ -681,6 +819,10 @@ class PylonCamera:
             d["heartbeat_ms"] = int(node.GetValue()) if node is not None else None
         except Exception:
             d["heartbeat_ms"] = None
+        try:
+            d["ip"] = self.ip_config()
+        except Exception:
+            d["ip"] = None
         return d
 
     # -- grabbing ----------------------------------------------------------
@@ -804,6 +946,18 @@ class CameraThread(threading.Thread):
             self._release_holder()
 
     def _run(self):
+        if not PYLON_AVAILABLE and self.address:
+            # A Basler camera's address is set but the Basler driver did not
+            # load: say so. Trying OpenCV with an IP address only ever gave
+            # "the camera is not accessible", which sent people looking for a
+            # program holding the camera when there was none.
+            self.last_error = ("The Basler camera driver (pypylon) did not load, so the "
+                               "camera at %s cannot be opened: %s. Reinstall it with "
+                               "pip install --force-reinstall pypylon; the packaged "
+                               "application carries its own copy."
+                               % (self.address, PYLON_ERROR or "pypylon is not installed"))
+            print("[camera] %s" % self.last_error)
+            return
         if self.prefer_pylon:
             try:
                 self._run_pylon()

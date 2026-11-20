@@ -62,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_tr_tool   ON tool_results(tool_id, status);
 
 
 class ResultStore:
-    def __init__(self, project_folder, project_id, archive="fail",
+    def __init__(self, project_folder, project_id, archive="none",
                  max_archived=2000, queue_size=512):
         """archive: "none" | "fail" | "all" """
         self.project_id = project_id
@@ -101,10 +101,15 @@ class ResultStore:
             c.close()
 
     # -- write path ------------------------------------------------------
-    def log(self, result, image=None, operator=""):
-        """Called from the inspection thread. Never blocks, never raises."""
+    def log(self, result, image=None, operator="", image_path=None):
+        """Called from the inspection thread. Never blocks, never raises.
+        image_path: where the part's picture was saved (Settings > Results);
+        it is recorded instead of keeping a copy here -- every picture kept
+        twice, once in the chosen folder and once in the job's folder, was
+        458 MB on one job in two days."""
         try:
-            payload = (result, image if self._want_image(result) else None, operator)
+            payload = (result, image if (image_path is None and self._want_image(result))
+                       else None, operator, image_path)
             self._q.put_nowait(payload)
         except queue.Full:
             # Drop the oldest so a stalled disk cannot back-pressure inspection.
@@ -127,11 +132,11 @@ class ResultStore:
         try:
             while not self._stop.is_set() or not self._q.empty():
                 try:
-                    result, image, operator = self._q.get(timeout=0.25)
+                    result, image, operator, saved = self._q.get(timeout=0.25)
                 except queue.Empty:
                     continue
                 try:
-                    self._write_one(conn, result, image, operator)
+                    self._write_one(conn, result, image, operator, saved)
                     self._written += 1
                 except Exception as e:            # logging must never kill the app
                     print("[results] write failed: %s" % e)
@@ -141,10 +146,10 @@ class ResultStore:
             except Exception:
                 pass
 
-    def _write_one(self, conn, result, image, operator):
+    def _write_one(self, conn, result, image, operator, saved=None):
         ts = time.time()
         iso = datetime.fromtimestamp(ts).isoformat(timespec="seconds")
-        img_path = ""
+        img_path = saved or ""
         if image is not None:
             day = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
             d = os.path.join(self.images_dir, day)

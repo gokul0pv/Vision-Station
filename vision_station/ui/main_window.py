@@ -34,7 +34,9 @@ if __name__ == "__main__" and not __package__:
 
 import collections
 import json
+import math
 import os
+import re
 import sys
 import time
 
@@ -59,7 +61,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDockWidget,
 
 from vision_station import paths
 
-HERE = paths.ROOT
+HERE = paths.APP_DIR        # projects/ and logs/ are here (beside the .exe when packaged)
 
 from vision_station.core.engine import ProjectStore            # noqa: E402
 from vision_station.core import imio                                 # noqa: E402
@@ -164,6 +166,9 @@ class ImageSource:
         self.current = None
         self.current_path = None
         self.last_error = ""
+        # Black and white from one colour channel ('G'...): a job whose light
+        # is set so takes its camera pictures so (core/light_tuning.to_mono)
+        self.mono = None
         # Relative taught paths are relative to the application's folder --
         # the same rule an exported job file applies to its own folder. They
         # were resolved against the current directory, so an application with
@@ -177,9 +182,12 @@ class ImageSource:
 
     # ---- persistence -------------------------------------------------
     def to_spec(self):
-        return {"mode": self.mode, "paths": list(self.files) if self.mode == "files" else [],
-                "folder": self.folder if self.mode == "folder" else "",
-                "camera": int(self.camera_index)}
+        out = {"mode": self.mode, "paths": list(self.files) if self.mode == "files" else [],
+               "folder": self.folder if self.mode == "folder" else "",
+               "camera": int(self.camera_index)}
+        if self.mono:
+            out["mono"] = self.mono
+        return out
 
     @classmethod
     def from_spec(cls, project, spec=None):
@@ -193,6 +201,7 @@ class ImageSource:
             src.mode, src.folder = "folder", spec["folder"]
         elif mode == "camera":
             src.mode, src.camera_index = "camera", int(spec.get("camera", 0))
+        src.mono = spec.get("mono") or None
         return src
 
     # ---- choosing ----------------------------------------------------
@@ -259,6 +268,9 @@ class ImageSource:
                     self.last_error = "the camera would not open: %s" % e
             if self.camera is not None:
                 img = self._camera_frame()
+                if img is not None and self.mono:
+                    from vision_station.core.light_tuning import to_mono
+                    img = to_mono(img, self.mono)
                 if img is None:
                     err = getattr(self.camera, "last_error", None)
                     self.last_error = ("the camera delivered no image"
@@ -436,9 +448,11 @@ class _Worker(QObject):
     workers = 1                                # set by the station
 
     def _one(self, seq, job):
-        pid, project, image, tools = job
+        pid, project, image, tools = job[:4]
+        code = job[4] if len(job) > 4 else None    # the barcode scanned for this part
         try:
-            res = project.inspect(image, source="quickbuild", keep_images=True, tools=tools)
+            res = project.inspect(image, source="quickbuild", keep_images=True, tools=tools,
+                                  barcode=code)
             self.done.emit(seq, pid, res)
         except Exception as e:
             self.failed.emit(seq, pid, "%s: %s" % (type(e).__name__, e))
@@ -459,6 +473,28 @@ class _Worker(QObject):
         self.finished.emit(seq)
 
 
+class _PreviewWorker(QObject):
+    """Runs a job on its own teach picture, off the window thread: what each
+    check gives there, while it is being set up."""
+    done = Signal(str, int, object)
+
+    def __init__(self):
+        super().__init__()
+        self.latest = {}                     # pid -> newest request number
+
+    def run(self, pid, seq, project, snapshot):
+        if self.latest.get(pid, seq) != seq:
+            return                           # a newer edit is waiting: skip this one
+        res = None
+        try:
+            if project.reference is not None:
+                res = project.inspect(project.reference, source="teach", keep_images=False,
+                                      tools=project.build_tools(snapshot))
+        except Exception as e:               # a half-set-up check must not stop the editor
+            print("[teach preview] %s" % e)
+        self.done.emit(pid, seq, res)
+
+
 class Station(QObject):
     """The application being run: its jobs, their image sources, the worker
     thread and the results queues.
@@ -474,6 +510,11 @@ class Station(QObject):
     _start = Signal(int, object)
     _warm = Signal()
     warmedUp = Signal(float)
+    # barcode-gated runs: an inspection asked for with no valid code waiting
+    barcodeNeeded = Signal()
+    # every check run on its job's teach picture, while the job is edited
+    previewResult = Signal(str, object)      # pid, result
+    _preview = Signal(str, int, object, object)
 
     def __init__(self, root):
         super().__init__()
@@ -488,11 +529,28 @@ class Station(QObject):
         self.failures = collections.deque(maxlen=QUEUE_LEN)
         self.counts = {"accept": 0, "reject": 0}
         self.acquisition_errors = 0
-        self.archive_mode = "fail"               # images kept: "fail" | "all" | "none"
+        # The results log keeps no pictures of its own: it records where
+        # Settings > Results saved each one -- one folder, not two
+        self.archive_mode = "none"
         # Settings > Results: each part's picture, annotated and/or original,
         # saved to a folder of the user's choosing on a background thread
         from vision_station.core.result_images import ResultImageWriter
         self.result_images = ResultImageWriter()
+        # Settings > Barcode: when on, a run from the Run view or the line
+        # needs a valid scanned code, and its pictures go in that code's folder
+        from vision_station.core import barcode as barcodes
+        self.barcode = barcodes.Gate()
+        self.barcode_root = os.path.join(paths.APP_DIR, "results")
+        self._codes = {}                     # run sequence -> its barcode
+        # every saved picture, searchable as you type (Find picture, Ctrl+F);
+        # each picture written is added the moment it is on disk
+        from vision_station.core.picture_index import PictureIndex
+        self.pictures = PictureIndex()
+        self.result_images.on_written.append(self.pictures.add)
+        # the external light (Settings > Light): on while a run takes its
+        # camera picture, or always; handed back as found when this closes
+        from vision_station.hardware.light import Light
+        self.light = Light()
         self.parallel = False
         self.operator = ""
         self.logs = {}
@@ -509,6 +567,38 @@ class Station(QObject):
         self._warm.connect(self._worker.warm_up)
         self._worker.warmed.connect(self.warmedUp)
         self._thread.start()
+        self._pthread = QThread()
+        self._pworker = _PreviewWorker()
+        self._pworker.moveToThread(self._pthread)
+        self._preview.connect(self._pworker.run)
+        self._pworker.done.connect(self._on_preview)
+        self._pseq = 0
+        self._pthread.start()
+
+    def preview(self, pid):
+        """Run job pid on its teach picture, in the background; the result
+        comes as previewResult. Never counted, logged or saved."""
+        p = self.projects.get(pid)
+        if p is None or p.reference is None:
+            return False
+        self._pseq += 1
+        self._pworker.latest[pid] = self._pseq
+        self._preview.emit(pid, self._pseq, p, json.loads(json.dumps(p.spec)))
+        return True
+
+    def _on_preview(self, pid, seq, res):
+        if res is not None and self._pworker.latest.get(pid) == seq:
+            self.previewResult.emit(pid, res)
+
+    def wait_preview(self, timeout_s=30.0):
+        """For tests: until the newest preview has come back."""
+        got = {}
+        self.previewResult.connect(lambda pid, r: got.setdefault("r", r))
+        t0 = time.time()
+        while "r" not in got and time.time() - t0 < timeout_s:
+            QApplication.processEvents()
+            time.sleep(0.005)
+        return got.get("r")
 
     # -------------------------------------------------------- application
     def applications(self):
@@ -544,6 +634,8 @@ class Station(QObject):
         self.failures.clear()
         self.counts = {"accept": 0, "reject": 0}
         self._warm.emit()                    # in the worker thread, not this one
+        from vision_station.core import advanced
+        advanced.warm(list(self.projects.values()))   # the jobs' own AI models
 
     # -- results log -----------------------------------------------------
     def _open_logs(self):
@@ -568,6 +660,14 @@ class Station(QObject):
             except Exception:
                 pass
         self.logs = {}
+
+    def picture_folders(self):
+        """The folders result pictures are saved in: Settings > Results, and
+        the barcode folders' root when that is somewhere else."""
+        from vision_station.core import barcode as barcodes
+        base = dict(self.result_images.cfg)
+        root = barcodes.results_root(self.barcode.cfg, base)
+        return [root] if root and os.path.isdir(root) else []
 
     def set_parallel(self, on):
         """Run a cycle's jobs side by side, one thread per job, never more than
@@ -608,18 +708,73 @@ class Station(QObject):
         self.projects[pid] = p
         if pid in self.sources:
             self.sources[pid].project = p
+        if getattr(p, "advanced", None) is not None:
+            from vision_station.core import advanced
+            advanced.warm([p])
         return p
 
     # -------------------------------------------------------- running
-    def run_once(self, pids=None):
+    def run_once(self, pids=None, gate=True):
+        """gate: the barcode rule applies (the Run view, the line). A job
+        editor's run, while teaching, is never held for a barcode."""
         if self.running:
             return False
+        # a job waiting for its advanced training trains first (the window
+        # sets before_run; core/advanced.py)
+        before = getattr(self, "before_run", None)
+        if before is not None and not before(pids or [j["pid"] for j in self.jobs]):
+            return False
+        code = None
+        if gate and self.barcode.enabled:
+            code = self.barcode.take()
+            if code is None:
+                self.barcodeNeeded.emit()
+                return False
         pids = pids or [j["pid"] for j in self.jobs]
+        work = []
+        # The light on before the camera's pictures are taken and settled
+        # for Settings > Light's "on before" time, then kept on for its "on
+        # after" time. The camera's sensor exposes its rows one after
+        # another: the frame being read out when the light switches is lit
+        # in one part and dark in the rest. The grab waits for frames
+        # exposed after it starts; the settle time is on top of that.
+        cam = any(self.sources[pid].mode == "camera" for pid in pids if pid in self.sources)
+        token = None
+        if cam:
+            self._light_runs = getattr(self, "_light_runs", 0) + 1
+            token = "run %d" % self._light_runs       # its own: a late release
+            self.light.hold(token)                    # never ends the next run's
+            self.light.settle()
+        try:
+            work = self._grab_all(pids, code)
+        finally:
+            if token is not None:
+                after = int(self.light.cfg.get("off_after_ms", 0) or 0)
+                if after > 0:
+                    QTimer.singleShot(after, lambda t=token: self.light.release(t))
+                else:
+                    self.light.release(token)
+        if work is None:
+            return False
+        self._seq += 1
+        self._codes = {self._seq: code}
+        self.running = True
+        self._start.emit(self._seq, work)
+        return True
+
+    def _grab_all(self, pids, code):
+        """(pid, project, image, tools) for every job that delivered a
+        picture; None when none did."""
         work = []
         for pid in pids:
             p = self.projects.get(pid)
             if p is None:
                 continue
+            if self.sources[pid].mode == "camera":
+                # the job's own light level -- the one its teach picture was
+                # taken at -- before its picture; the grab waits for frames
+                # exposed after the change
+                self.light.use_job_level(pid, p.spec.get("light_level"))
             img = self.sources[pid].grab()
             if img is None:
                 self.acquisition_errors += 1
@@ -629,25 +784,32 @@ class Station(QObject):
             # in the editors take effect on this run, and the worker never
             # reads a dictionary the window is in the middle of changing.
             snapshot = json.loads(json.dumps(p.spec))
-            work.append((pid, p, img, p.build_tools(snapshot)))
+            work.append((pid, p, img, p.build_tools(snapshot), code))
         if not work:
+            if code is not None:
+                self.barcode.pending = code      # not used: still this part's code
             if self.continuous:              # keep trying: the camera may recover
                 QTimer.singleShot(200, lambda: self.continuous and
-                                  self.run_once(getattr(self, "_cont_pids", None)))
-            return False
-        self._seq += 1
-        self.running = True
-        self._start.emit(self._seq, work)
-        return True
+                                  self.run_once(getattr(self, "_cont_pids", None),
+                                                getattr(self, "_cont_gate", True)))
+            return None
+        return work
 
-    def start_continuous(self, pids=None):
+    def start_continuous(self, pids=None, gate=True):
         self.continuous = True
         self._cont_pids = pids
+        self._cont_gate = gate
+        # one part after another: the light stays on until Stop rather than
+        # flashing for every part
+        if any(src.mode == "camera" for pid, src in self.sources.items()
+               if pids is None or pid in pids):
+            self.light.hold("continuous")
         if not self.running:
-            self.run_once(pids)
+            self.run_once(pids, gate)
 
     def stop(self):
         self.continuous = False
+        self.light.release("continuous")
 
     def wait(self, timeout_s=30.0):
         """Block, pumping events, until the current run finishes. For scripts
@@ -661,15 +823,32 @@ class Station(QObject):
     def _on_done(self, seq, pid, res):
         if seq != self._seq:
             return                           # a stale result from an older run
+        code = self._codes.get(seq)
+        if code:
+            res["barcode"] = code
         self.last[pid] = res
-        lg = self.logs.get(pid)
-        if lg is not None:
-            lg.log(res, res.get("input_image"), self.operator)
+        self._keep_light_adjusted(pid, res)
+        saved = None
         try:
             name = next((j["name"] for j in self.jobs if j["pid"] == pid), pid)
-            self.result_images.submit(res.get("input_image"), res, name)
+            cfg = None
+            if code:
+                # every picture of this part, in today's folder, in the
+                # folder named after its code -- inside the one folder of
+                # Settings > Results; none chosen, none kept
+                from vision_station.core import barcode as barcodes
+                from vision_station.core.result_images import folder_for
+                base = dict(self.result_images.cfg)
+                root = barcodes.results_root(self.barcode.cfg, base)
+                cfg = barcodes.result_cfg(base, root, code) if root else {}
+                self.barcode.last = (code, res["verdict"], folder_for(cfg) if root else "")
+            saved = self.result_images.submit(res.get("input_image"), res, name, cfg=cfg)
         except Exception as e:                    # saving must never stop the line
             print("[results] %s" % e)
+        lg = self.logs.get(pid)
+        if lg is not None:
+            # the run recorded with where its picture went: no second copy
+            lg.log(res, None, self.operator, image_path=saved or "")
         accept = res["verdict"] == "PASS"
         self.counts["accept" if accept else "reject"] += 1
         entry = self._queue_entry(pid, res)
@@ -677,6 +856,35 @@ class Station(QObject):
         if not accept:
             self.failures.append(entry)
         self.jobResult.emit(pid, res)
+
+    def _keep_light_adjusted(self, pid, res):
+        """Settings > Light > Keep adjusted: this part's picture sets the
+        light for the next, aiming at the job's teach picture. A job with its
+        own light level (its teach picture taken with the best light) keeps
+        its own correction; jobs without one share the Brightness setting,
+        and only the first of them corrects it -- one light, one measure per
+        cycle."""
+        lt = self.light
+        if not (lt.enabled and lt.cfg.get("auto")) or res.get("input_image") is None:
+            return
+        p = self.projects.get(pid)
+        if p is None or self.sources.get(pid) is None or self.sources[pid].mode != "camera":
+            return
+        taught = p.spec.get("light_level")
+        own = taught is not None or pid in (lt.cfg.get("job_levels") or {})
+        if not own:
+            first = next((j["pid"] for j in self.jobs
+                          if self.sources.get(j["pid"]) is not None
+                          and self.sources[j["pid"]].mode == "camera"
+                          and self.projects.get(j["pid"]) is not None
+                          and self.projects[j["pid"]].spec.get("light_level") is None), None)
+            if pid != first:
+                return
+        try:
+            lt.auto_step(res["input_image"], getattr(p, "reference", None),
+                         pid=pid if own else None, taught=taught)
+        except Exception as e:                    # never stops the line
+            print("[light] not adjusted: %s" % e)
 
     def _on_failed(self, seq, pid, msg):
         if seq == self._seq:
@@ -692,16 +900,28 @@ class Station(QObject):
             # cancel a next run that was already scheduled. Without the check
             # one extra inspection slipped through after every Stop.
             QTimer.singleShot(0, lambda: self.continuous and
-                              self.run_once(getattr(self, "_cont_pids", None)))
+                              self.run_once(getattr(self, "_cont_pids", None),
+                                            getattr(self, "_cont_gate", True)))
 
     def _queue_entry(self, pid, res):
         """Results queue entries keep their image JPEG-encoded: thirty-two
         full-resolution frames of a 5-megapixel camera would hold half a
         gigabyte; encoded they hold about fifteen megabytes."""
         img = res.get("input_image")
-        jpg = None
+        jpg, size = None, None
         if img is not None:
-            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            # A preview, not an archive: reduced to the queue display's size
+            # first. Encoding the whole 20-megapixel frame took 220 ms of the
+            # window's thread every cycle, and decoding it again 100 ms more.
+            # (Full pictures are saved by the result-image writer.)
+            size = (int(img.shape[1]), int(img.shape[0]))
+            k = min(1.0, QUEUE_PREVIEW_PX / float(max(size)))
+            step = max(1, int(0.5 / k)) if k < 1.0 else 1     # thinned first: area
+            pre = img[::step, ::step] if step > 1 else img     # averaging of 20 MP is slow
+            small = img if k >= 1.0 else cv2.resize(
+                pre, (max(1, int(size[0] * k)), max(1, int(size[1] * k))),
+                interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 88])
             jpg = buf.tobytes() if ok else None
         posted = {}
         byid = {t["tool_id"]: t for t in res["tools"]}
@@ -717,14 +937,18 @@ class Station(QObject):
         return {"posted": posted,
                 "time": time.strftime("%H:%M:%S"), "job": pid, "verdict": res["verdict"],
                 "failed": [t["tool_id"] for t in res["tools"] if t["status"] != "pass"],
-                "ms": res.get("total_ms", 0.0), "jpg": jpg, "tools": res["tools"]}
+                "ms": res.get("total_ms", 0.0), "jpg": jpg, "size": size,
+                "tools": res["tools"], "barcode": res.get("barcode", "")}
 
     def shutdown(self):
         self.stop()
         self.wait(30)
+        self.light.shutdown()                # the controller back on its own
         self._close_logs()
         for src in self.sources.values():
             src.stop_camera()
+        self._pthread.quit()
+        self._pthread.wait()
         self._thread.quit()
         # Wait for the inspection thread to finish: destroying a QThread that is
         # still running aborts the process. It only runs inspections now, which
@@ -779,10 +1003,353 @@ def apply_drawn_region(t, kind, geom):
         p.update(shape="ellipse" if kind == "ellipse" else "rect",
                  roi=[int(v) for v in geom["roi"]], angle=0.0)
         p.pop("points", None)
-FULL_FRAME_RECORDS = ("Current.InputImage", "LastRun.InputImage", "LastRun.OutputImage")
+FULL_FRAME_RECORDS = ("Reference", "Current.InputImage", "LastRun.InputImage",
+                      "LastRun.OutputImage")
+TEACH = "Reference"          # the teach picture: the job's reference image
+QUEUE_PREVIEW_PX = 1600      # long side of a results-queue preview
+RUN_VIEW_ALL_TAGS = 12       # more checks than this: the Run view labels only failures
 
 
-def records_for(res, tool_id=None, current=None, reads=None):
+def same_picture(a, b):
+    """Whether two frames are the same picture -- the same array, or the
+    same pixels on a sparse grid (a copy of the reference read back)."""
+    if a is None or b is None:
+        return False
+    if a is b:
+        return True
+    if a.shape != b.shape:
+        return False
+    return bool(np.array_equal(a[::29, ::31], b[::29, ::31]))
+
+
+def fixture_moved(res):
+    """Whether a run's fixture moved the regions: then they are not where
+    they were drawn on that run's picture."""
+    for M in spaces_for(res).values():
+        m = np.asarray(M, np.float64)
+        if m.shape[0] >= 2 and (abs(m[0, 2]) > 0.5 or abs(m[1, 2]) > 0.5
+                                or abs(m[0, 1]) > 1e-3 or abs(m[0, 0] - 1.0) > 1e-3):
+            return True
+    return False
+
+
+def regions_fit(record, image, reference, res):
+    """Whether the checks' regions, which are in teach-picture coordinates,
+    sit on the right place of this record's picture. Shown on any other
+    picture they marked the wrong place -- a board lying 60 px further
+    along had every box 60 px off its part -- while the true result
+    outlines were hidden beneath them."""
+    if record == TEACH:
+        return True
+    if record not in ("Current.InputImage", "LastRun.InputImage"):
+        return record in FULL_FRAME_RECORDS
+    if reference is None:
+        return True                      # nothing taught yet: the picture is the frame
+    if not same_picture(image, reference):
+        return False
+    return record == "Current.InputImage" or not fixture_moved(res)
+
+
+def move_regions(tools, M):
+    """Every region moved by a 2x3 (or 3x3) transform: a box's centre moved
+    and its angle turned, polygon points and a counting sample moved."""
+    m = np.asarray(M, np.float64)[:2]
+    rot = math.degrees(math.atan2(m[1, 0], m[0, 0]))
+
+    def pt(x, y):
+        return (m[0, 0] * x + m[0, 1] * y + m[0, 2], m[1, 0] * x + m[1, 1] * y + m[1, 2])
+
+    def box(r, turn=True):
+        x, y, w, h = r
+        cx, cy = pt(x + w / 2.0, y + h / 2.0)
+        return [int(round(cx - w / 2.0)), int(round(cy - h / 2.0)), int(w), int(h)]
+
+    for t in tools:
+        prm = t.get("params") or {}
+        if prm.get("roi"):
+            prm["roi"] = box(prm["roi"])
+            if prm.get("shape") != "polygon" and abs(rot) > 0.05:
+                prm["angle"] = round(float(prm.get("angle", 0.0) or 0.0) + rot, 3)
+        if prm.get("points"):
+            prm["points"] = [[round(a, 2) for a in pt(x, y)] for x, y in prm["points"]]
+        if prm.get("template_roi"):
+            prm["template_roi"] = box(prm["template_roi"])
+
+
+# The one setting that decides how strict a check is, by check type: what a
+# group of checks of one kind shares and is adjusted by together.
+THRESHOLD_KEYS = {
+    "presence": ("min_score", "Accept threshold"),
+    "count_template": ("min_score", "Accept threshold"),
+    "align": ("min_score", "Accept threshold"),
+    "ocv": ("min_confidence", "Reading confidence"),
+    "ocr": ("min_confidence", "Reading confidence"),
+}
+
+
+def group_name(t):
+    """A check's group: the one Find parts gave it, else its name without
+    the number ('inductor' for inductor_07) -- so checks added before groups
+    existed are grouped too."""
+    import re as _re
+    prm = t.get("params") or {}
+    return prm.get("group") or _re.sub(r"_?\d+$", "", t.get("id", "")) or t.get("id", "")
+
+
+def group_members(t, tools):
+    """Every check of the same kind and group as t (t included)."""
+    if t is None:
+        return []
+    g, ty = group_name(t), t.get("type")
+    return [x for x in tools if x.get("type") == ty and group_name(x) == g]
+
+
+class GroupBar(QFrame):
+    """Above a check's properties when it belongs to a group of the same
+    kind -- the twelve inductors Find parts added -- or when several boxes
+    are selected: one threshold for all of them, select them all on the
+    picture, turn them all on or off. A kind of part that fails on every
+    board is put right once, not twelve times."""
+
+    def __init__(self, editor):
+        super().__init__()
+        from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox
+        self.ed = editor
+        self.members = []
+        self.setObjectName("groupBar")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(6)
+        self.title = QLabel("")
+        self.title.setObjectName("groupBarTitle")
+        self.title.setWordWrap(True)
+        v.addWidget(self.title)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.thrLabel = QLabel("Threshold for all")
+        self.thr = QDoubleSpinBox()
+        self.thr.setRange(0.0, 1.0)
+        self.thr.setSingleStep(0.05)
+        self.thr.setDecimals(2)
+        self.thr.setKeyboardTracking(False)
+        self.thr.valueChanged.connect(self._apply_threshold)
+        row.addWidget(self.thrLabel)
+        row.addStretch(1)
+        row.addWidget(self.thr)
+        v.addLayout(row)
+        # what the group scored on the last part: how far the threshold may go
+        self.scores = QLabel("")
+        self.scores.setObjectName("rowHelp")
+        self.scores.setWordWrap(True)
+        v.addWidget(self.scores)
+        row = QHBoxLayout()
+        self.selectBtn = QPushButton("Select all on the picture")
+        self.selectBtn.setObjectName("linkButton")
+        self.selectBtn.clicked.connect(self._select_all)
+        self.teachBtn = QPushButton("Expect what each reads now")
+        self.teachBtn.setToolTip("Each text check expects the text it reads on the teach "
+                                 "picture - for Read text checks made before they expected "
+                                 "anything, which passed a scribbled or wrong marking")
+        self.teachBtn.clicked.connect(self._teach_texts)
+        v.addWidget(self.teachBtn)
+        self.onBox = QCheckBox("Run them")
+        self.onBox.setToolTip("Turn every check of the group on or off")
+        self.onBox.clicked.connect(self._set_enabled)
+        row.addWidget(self.selectBtn)
+        row.addStretch(1)
+        row.addWidget(self.onBox)
+        v.addLayout(row)
+        self.hide()
+
+    def show_for(self, members, title):
+        self.members = list(members)
+        if len(self.members) < 2:
+            self.hide()
+            return
+        keyed = [m for m in self.members if m.get("type") in THRESHOLD_KEYS]
+        self.title.setText(title)
+        self.thr.blockSignals(True)
+        if keyed:
+            key, label = THRESHOLD_KEYS[keyed[0]["type"]]
+            vals = sorted({round(float(m["params"].get(key, 0.65 if key == "min_score" else 0.5)),
+                                 3) for m in keyed})
+            self.thr.setValue(vals[0])
+            self.thrLabel.setText("%s for all %d%s" % (label, len(keyed),
+                                                     "" if len(vals) == 1 else
+                                                     "  (now %s - %s)" % (vals[0], vals[-1])))
+        self.thr.blockSignals(False)
+        for w in (self.thr, self.thrLabel):
+            w.setVisible(bool(keyed))
+        self.teachBtn.setVisible(any(m.get("type") in ("ocv", "ocr") for m in self.members))
+        res = self.ed._run_res()
+        got = {t["tool_id"]: t for t in (res or {}).get("tools", [])}
+        sc = [(got[m["id"]]["score"], m["id"], got[m["id"]]["status"]) for m in keyed
+              if m["id"] in got]
+        if sc:
+            lo = min(sc)
+            nfail = sum(1 for x in sc if x[2] != "pass")
+            self.scores.setText("Last run: lowest score %.2f (%s)%s" % (
+                lo[0], lo[1], "  -  %d failed" % nfail if nfail else ""))
+        self.scores.setVisible(bool(sc))
+        on = [m["params"].get("enabled", True) is not False for m in self.members]
+        self.onBox.setTristate(False)
+        self.onBox.setCheckState(Qt.Checked if all(on) else
+                                 Qt.Unchecked if not any(on) else Qt.PartiallyChecked)
+        self.show()
+
+    def _apply_threshold(self, v):
+        n = 0
+        for m in self.members:
+            k = THRESHOLD_KEYS.get(m.get("type"))
+            if k:
+                m.setdefault("params", {})[k[0]] = round(float(v), 3)
+                n += 1
+        if n:
+            self.ed._group_edited("%s %.2f on %d checks" % (
+                THRESHOLD_KEYS[next(m for m in self.members
+                                    if m.get("type") in THRESHOLD_KEYS)["type"]][1], v, n))
+
+    def _teach_texts(self):
+        """Every text check of the group expects what it reads on the teach
+        picture, as the live results read it."""
+        pv = self.ed._preview_res() or {}
+        read = {t["tool_id"]: (t.get("values") or {}) for t in pv.get("tools", [])}
+        n, missing = 0, []
+        for m in self.members:
+            if m.get("type") not in ("ocv", "ocr"):
+                continue
+            vals = read.get(m["id"])
+            # Verify text: the text it read (the matching line when it passed);
+            # Read text: every line it read
+            text = (vals.get("text") if m["type"] == "ocv" else
+                    " ".join(vals.get("lines") or [])) if vals else ""
+            text = (text or "").strip()
+            if not text:
+                missing.append(m["id"])
+                continue
+            prm = m.setdefault("params", {})
+            if m["type"] == "ocv":
+                prm["expect_text"] = re.sub(r"\s+", "", text) if prm.get("strip_spaces", True) \
+                    else text
+                prm["expect_auto"] = prm["expect_text"]
+            else:
+                prm["expect_contains"] = text
+            n += 1
+        self.ed._group_edited("%d text checks now expect what they read on the teach picture%s"
+                              % (n, ("; nothing read in %s" % ", ".join(missing[:4]))
+                                 if missing else ""))
+
+    def _set_enabled(self):
+        on = self.onBox.checkState() != Qt.Unchecked
+        self.onBox.setCheckState(Qt.Checked if on else Qt.Unchecked)
+        for m in self.members:
+            if on:
+                m.setdefault("params", {}).pop("enabled", None)
+            else:
+                m.setdefault("params", {})["enabled"] = False
+        self.ed._group_edited("%d checks turned %s" % (len(self.members), "on" if on else "off"))
+
+    def _select_all(self):
+        ids = [m["id"] for m in self.members]
+        self.ed.display.record.setCurrentText(TEACH)
+        self.ed.display.canvas.select_ids([i for i in ids if i in self.ed.display.canvas.regions])
+        self.ed.display.canvas.zoom_to_selection()
+
+
+def _examples_signature(folder):
+    """What the OK / NG examples in a project are now: their files and times."""
+    import glob as _glob
+    out = []
+    for f in _glob.glob(os.path.join(folder, "training", "*", "*", "*")):
+        try:
+            out.append((f, os.path.getmtime(f)))
+        except OSError:
+            pass
+    return tuple(sorted(out))
+
+
+def teach_check(project, t, name=None):
+    """What a check learns from the teach picture when its region is set:
+    (text, message). A Verify text check reads its box there and expects
+    that text -- it used to expect nothing and so passed whatever was
+    printed. Text typed in by hand is never replaced; text taught is
+    remembered as taught (expect_auto) so a moved box is read again."""
+    if t is None or t.get("type") != "ocv":
+        return None, ""
+    name = name or t.get("id", "")
+    prm = t.setdefault("params", {})
+    if prm.get("expect_regex") or (prm.get("expect_text") and
+                                   prm.get("expect_text") != prm.get("expect_auto")):
+        return None, ""
+    img = project.reference if project is not None else None
+    if img is None or not prm.get("roi"):
+        return None, ""
+    text, others = taught_text(img, t)
+    if text is None:
+        return None, others
+    if not text:
+        prm["expect_text"] = ""
+        prm.pop("expect_auto", None)
+        return "", ("No text read in the box of %s - fit the box round the marking, or "
+                    "type the text under Settings" % name)
+    prm["expect_text"] = text
+    prm["expect_auto"] = text
+    return text, "%s taught: it expects '%s'%s (change it under Settings)" % (
+        name, text, "; other text in the box is ignored" if others else "")
+
+
+def taught_text(img, t):
+    """(text, others) a Verify text check should expect from its box on
+    the teach picture: the clearest whole line in it. A box usually holds
+    more than its marking -- the edge of a neighbouring word, a via read as
+    "O" -- and expecting everything it read failed the check on its own
+    teach picture as soon as the part moved a fraction of a pixel and a
+    fragment read differently. Lines cut by the box's edge, single
+    characters and doubtful reads are passed over while a clear line
+    exists. text is None when the reader is not available (others is then
+    the reason)."""
+    import re as _re
+    from vision_station.core.engine import Context
+    from vision_station.tools import make_tool
+    from vision_station.tools.text import read_region
+    prm = dict(t.get("params") or {}, expect_text="", expect_regex="")
+    tool = make_tool({"id": t["id"], "type": "ocv", "params": prm})
+    # the wait cursor only from the window's thread (the glass front end
+    # teaches from its server's threads)
+    app = QApplication.instance()
+    gui = app is not None and QThread.currentThread() is app.thread()
+    if gui:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        lines, _unsure, _o, _e = read_region(tool, img, Context(reference=img))
+        crop, _o2 = tool.crop(img, Context(reference=img))
+    except Exception as e:                   # no reader on this PC: say so, change nothing
+        return None, "Could not read the text to teach it: %s" % e
+    finally:
+        if gui:
+            QApplication.restoreOverrideCursor()
+    strip = prm.get("strip_spaces", True)
+    H, W = crop.shape[:2] if crop is not None else (0, 0)
+
+    def norm(x):
+        return _re.sub(r"\s+", "", x) if strip else x.strip()
+
+    def cut(ln):
+        b = ln.get("box") or [0, 0, 0, 0]
+        return b[0] <= 1 or b[1] <= 1 or b[0] + b[2] >= W - 1 or b[1] + b[3] >= H - 1
+
+    cands = [ln for ln in lines if len(norm(ln["text"])) >= 2] or \
+        [ln for ln in lines if norm(ln["text"])]
+    if not cands:
+        return "", False
+    best = max(cands, key=lambda ln: (not cut(ln), ln["confidence"] >= 0.8,
+                                      len(norm(ln["text"])), ln["confidence"]))
+    return norm(best["text"]), len(lines) > 1
+
+
+def records_for(res, tool_id=None, current=None, reads=None, reference=None,
+                teach=None):
     """The record list a display offers, VisionPro-style. Current.InputImage is
     the image that will be inspected next; the LastRun records are what the
     last run saw and produced.
@@ -795,6 +1362,10 @@ def records_for(res, tool_id=None, current=None, reads=None):
     own = (res or {}).get("images", {}).get(reads) if reads and reads != "default" else None
     if own is not None:
         current = own
+    elif reference is not None:
+        # the picture the checks are drawn and taught on, always first --
+        # with what every check gives on it, when that has been worked out
+        out[TEACH] = (reference, list((teach or {}).get("tools", [])))
     if current is not None:
         out["Current.InputImage"] = (current, [])
     if res:
@@ -814,6 +1385,145 @@ def records_for(res, tool_id=None, current=None, reads=None):
 
 
 # ================================================================ tool edit control
+# The light's level while the camera's white is balanced: lit, not burnt out.
+BALANCE_LEVEL = 96
+from vision_station.core.advanced import N_PICTURES as ADVANCED_PICTURES  # noqa: E402
+
+
+class ReferenceSourceDialog(QDialog):
+    """New application or job: where the picture of a good part comes from.
+
+    Its own dialog, not a QMessageBox: the message box's buttons were held to
+    a fixed width by the button box, and in the dark theme they showed
+    "e for a picture" and "nce image from the" -- neither choice readable.
+    Here each choice is a full-width button with a line under it saying
+    what it does. choice: 'file', 'camera' or None."""
+
+    def __init__(self, parent, title, advanced=False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setObjectName("referenceSourceDialog")
+        self.choice = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        head = QLabel("Where does the picture of a GOOD part come from?")
+        f = head.font()
+        f.setPointSizeF(f.pointSizeF() * 1.2)
+        f.setBold(True)
+        head.setFont(f)
+        head.setWordWrap(True)
+        lay.addWidget(head)
+        sub = QLabel("Every part is compared with it.")
+        sub.setObjectName("rowHelp")
+        lay.addWidget(sub)
+        self.advancedNote = None
+        if advanced:
+            # Settings > General > Use advanced model for training
+            note = QLabel(
+                "<b>Advanced model training will be used for this job.</b><br>"
+                "Take one reference picture as usual, then mark everything to inspect: "
+                "parts that must be present (Find parts) and text to verify or read "
+                "(Find text). Then choose <b>Run &#9662; Model teaching run</b>: Vision Station "
+                "takes %d more pictures of the good part, adds them to every check's good "
+                "pictures and trains the job's own AI model on the graphics card - a few "
+                "minutes, with a window showing how far it is. A normal Run only "
+                "inspects." % ADVANCED_PICTURES)
+            note.setObjectName("advancedNote")
+            note.setWordWrap(True)
+            note.setTextFormat(Qt.RichText)
+            # the frame's margins, not a style sheet's padding: a wrapped
+            # label's height is worked out without the padding, and its last
+            # line was cut off
+            box = QFrame()
+            box.setObjectName("advancedNoteBox")
+            box.setStyleSheet("QFrame#advancedNoteBox { border: 1px solid palette(highlight); "
+                              "border-radius: 6px; }")
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(12, 10, 12, 10)
+            bl.addWidget(note)
+            lay.addSpacing(4)
+            lay.addWidget(box)
+            self.advancedNote = note
+        lay.addSpacing(6)
+        self.aiBtn = self._option(
+            lay, "AI reference image from the camera", "sparkle",
+            "The camera takes it. When Vision Station controls the light, the AI first "
+            "tries it at several levels and keeps the clearest picture, with the camera's "
+            "white balanced under the light. The job then takes its pictures from the "
+            "camera, at that light.", "camera", primary=True)
+        self.fileBtn = self._option(
+            lay, "Browse for a picture file...", "open",
+            "A picture of a good part you already have.", "file")
+        lay.addSpacing(4)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.setMinimumWidth(100)
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        lay.addLayout(row)
+        self.setMinimumWidth(520)
+        self.aiBtn.setFocus()
+
+    def _option(self, lay, text, icon, help_text, choice, primary=False):
+        b = QPushButton(icons.icon(icon), "  " + text)
+        b.setMinimumHeight(44)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        b.setAutoDefault(primary)
+        b.setDefault(primary)
+        if primary:
+            b.setObjectName("primaryButton")
+        f = b.font()
+        f.setPointSizeF(f.pointSizeF() * 1.08)
+        b.setFont(f)
+        b.clicked.connect(lambda: self._chosen(choice))
+        lay.addWidget(b)
+        note = QLabel(help_text)
+        note.setObjectName("rowHelp")
+        note.setWordWrap(True)
+        note.setContentsMargins(6, 0, 6, 8)
+        lay.addWidget(note)
+        return b
+
+    def _chosen(self, choice):
+        self.choice = choice
+        self.accept()
+
+
+def write_recipe_keys(path, keys):
+    """These keys written into a recipe file on disk, the rest as it is."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            spec = json.load(f)
+        spec.update(keys)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+        return True
+    except Exception as e:
+        print("[recipe] %s not written: %s" % (", ".join(keys), e))
+        return False
+
+
+def place_barcode_checks(editor):
+    """A check just set to compare with the scanned barcode goes to just
+    after the fixture, so the barcode is the first thing checked and is
+    found there in the list (core/barcode.py). The ids moved."""
+    from vision_station.core import barcode as barcodes
+    try:
+        p = editor.project()
+    except Exception:
+        return []
+    if p is None:
+        return []
+    moved = barcodes.place_compare_checks(p.spec.get("tools", []))
+    if moved:
+        editor.statusBar().showMessage(
+            "%s moved to just after the fixture: the barcode is checked first"
+            % ", ".join(moved), 8000)
+    return moved
+
+
 class ToolEditControl(QMainWindow):
     """One tool, in its own window, as VisionPro's tool edit controls are."""
 
@@ -880,6 +1590,10 @@ class ToolEditControl(QMainWindow):
         c.allow_duplicate = c.allow_delete = False
         c.shapeDrawn.connect(self._drawn)
         c.lockChanged.connect(self._lock)
+        # a region is drawn on the teach picture, wherever the drawing starts
+        self._editable = True
+        self.display.before_draw = lambda: (
+            not self._editable and self.display.record.setCurrentText(TEACH))
 
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.props)
@@ -930,7 +1644,8 @@ class ToolEditControl(QMainWindow):
         self.props.show_result(tres)
         src = self.qb.station.sources.get(self.pid)
         current = src.current if src and src.current is not None else p.reference
-        recs = records_for(res, t["id"], current, reads=t["params"].get("capture"))
+        recs = records_for(res, t["id"], current, reads=t["params"].get("capture"),
+                           reference=p.reference)
         self.display.set_records(recs, prefer="LastRun.InputImage" if first and res
                                  else None)
         self.display.set_spaces(spaces_for(res))
@@ -951,12 +1666,26 @@ class ToolEditControl(QMainWindow):
         # Regions only on full-frame records. A projection plot, a histogram or
         # the cropped region has its own coordinates, and the tool's outline
         # drawn over it was meaningless.
-        full_frame = self.display.current_record() in FULL_FRAME_RECORDS
-        if self.display.current_record() == "LastRun.OutputImage" and \
-                t["type"] in GEOMETRY_CHANGING:
+        rec = self.display.current_record()
+        img = self.display._records.get(rec, (None, None))[0]
+        p = self.project()
+        res = self.qb.station.last.get(self.pid)
+        full_frame = rec in FULL_FRAME_RECORDS and (
+            t["params"].get("capture") not in (None, "", "default")
+            or regions_fit(rec, img, p.reference, res))
+        if rec == "LastRun.OutputImage" and t["type"] in GEOMETRY_CHANGING:
             full_frame = False       # a resampled or unwrapped image has its own coordinates
         c.sync_regions([t] if full_frame else [], None)
-        editable = self.display.current_record() == "Current.InputImage"
+        editable = full_frame and rec in (TEACH, "Current.InputImage")
+        self._editable = editable
+        if rec in ("Current.InputImage", "LastRun.InputImage") and not full_frame \
+                and img is not None:
+            self.display.set_note(
+                "The box shows where this check found its part on this picture. "
+                "It is drawn and moved on the Teach picture.",
+                ("Show Teach picture", lambda: self.display.record.setCurrentText(TEACH)))
+        else:
+            self.display.set_note(None)
         for it in c.regions.values():
             it.setFlag(it.GraphicsItemFlag.ItemIsMovable, editable)
             it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, editable)
@@ -1086,6 +1815,34 @@ class ToolEditControl(QMainWindow):
             it.setData(Qt.UserRole, path)
             it.setToolTip(path)
             self.trainLists[label].addItem(it)
+        self._warn_examples(t)
+
+    def _warn_examples(self, t):
+        """An NG example of a Part present check that looks just like the good
+        reference here rejects only that very picture: every other good
+        board is as like it as the reference is. Said, so nobody expects it
+        to reject more."""
+        if t.get("type") != "presence" or not t["params"].get("roi"):
+            return
+        p = self.project()
+        if p.reference is None:
+            return
+        from vision_station.tools import count as C
+        x, y, w, h = t["params"]["roi"]
+        tpl = C._gray(p.reference[max(0, y):y + h, max(0, x):x + w])
+        try:
+            ex = C.training_examples(p.folder, t["id"], [x, y, w, h], tpl)
+        except Exception:
+            return
+        alike = [e for e in ex if e[0] == "ng" and C._patch_sim(e[2], tpl) >= 0.97]
+        if alike and not self.trainReport.text():
+            self.trainReport.setText(
+                "%d NG example%s look%s like the good reference here: %s only that very "
+                "picture. Add pictures of the real fault (the part missing, wrong or "
+                "damaged) to reject it on every board." % (
+                    len(alike), "" if len(alike) == 1 else "s", "s" if len(alike) == 1 else "",
+                    "it rejects" if len(alike) == 1 else "they reject"))
+            theme.set_tone(self.trainReport, "warn")
 
     def _current_image(self):
         src = self.qb.station.sources.get(self.pid)
@@ -1099,7 +1856,16 @@ class ToolEditControl(QMainWindow):
             return None
         path = self.side().add_training_image(self.tool_id, img, label)
         self.refresh_train()
+        self._examples_changed()
         return path
+
+    def _examples_changed(self):
+        """An OK or NG example decides a Part present check now: every window
+        showing the job is brought up to date, and with Live Update on the
+        check is run again."""
+        self.qb.job_changed(self.pid, source=self)
+        if self.aElectric.isChecked():
+            self._electric.start()
 
     def _train_menu(self, lst, label, pos):
         item = lst.itemAt(pos)
@@ -1107,6 +1873,7 @@ class ToolEditControl(QMainWindow):
             if item is not None:
                 self._marks.pop(item.data(Qt.UserRole), None)
             self.refresh_train()
+            self._examples_changed()
 
     def _saved_first(self):
         """Training reads and writes the job on disk, so unsaved edits are
@@ -1175,6 +1942,7 @@ class ToolEditControl(QMainWindow):
             self._electric.start()           # debounced: one run per burst of edits
 
     def _settings_changed(self):
+        place_barcode_checks(self)
         self._changed()
 
     def _geometry_live(self, tid, roi):
@@ -1185,7 +1953,16 @@ class ToolEditControl(QMainWindow):
 
     def _geometry(self, tid, roi):
         self._geometry_live(tid, roi)
+        self._teach()
         self._changed()
+
+    def _teach(self):
+        t = self.spec()
+        text, msg = teach_check(self.project(), t)
+        if msg:
+            self.statusBar().showMessage(msg, 10000)
+        if text is not None and t is not None:
+            self.props.load(t)
 
     def _angle(self, tid, deg):
         t = self.spec()
@@ -1199,6 +1976,7 @@ class ToolEditControl(QMainWindow):
         if t is None:
             return
         apply_drawn_region(t, kind, geom)
+        self._teach()
         self.props.load(t)
         self._sync_regions()
         self._changed()
@@ -1657,6 +2435,22 @@ class JobEditor(QMainWindow):
         make_action(bar, "Image Source...", self.image_source, None,
                     "Where this job's images come from - reference, files, a folder "
                     "or a camera", icon='image_source')
+        # The good-part picture every check compares with. A project started
+        # from a picture of a faulty part accepted that fault on every part --
+        # the checks compared it with itself -- with no way here to replace it.
+        refb = QToolButton()
+        refb.setText("Good reference")
+        refb.setIcon(icons.icon("photo"))
+        refb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        refb.setPopupMode(QToolButton.InstantPopup)
+        refb.setToolTip("The picture of a GOOD part that every check compares with")
+        rm = QMenu(refb)
+        rm.addAction("Use the picture on screen as the good reference",
+                     lambda: self.set_reference())
+        rm.addAction("Choose a picture of a good part...", lambda: self.set_reference(ask=True))
+        refb.setMenu(rm)
+        self._ref_menu = rm
+        bar.addWidget(refb)
         # Add a tool from here, by category -- the Toolbox panel needs a column
         # of the window to itself, and a small screen cannot spare one
         from vision_station.ui.widgets import fill_tool_menu
@@ -1668,16 +2462,17 @@ class JobEditor(QMainWindow):
         addb.setPopupMode(QToolButton.InstantPopup)
         addb.setToolTip("Add a tool to this job - it is selected, with its region in "
                         "the middle of the image, ready to place")
-        self._add_menu = fill_tool_menu(QMenu(addb), self.add_tool)
+        self._add_menu = fill_tool_menu(QMenu(addb), self.begin_add)
         addb.setMenu(self._add_menu)
         addb.clicked.connect(self._add_clicked)     # fires only without the menu: simple view
         self.addb = addb
         bar.addWidget(addb)
         # every component in an area found by the network on the graphics
         # card, reviewed, and added as Part present checks in one step
-        self.aFindParts = make_action(bar, "Find parts (AI)", lambda: self.find_parts(), None,
-                                      "Find every component in an area automatically and "
-                                      "add a Part present check for each one you keep",
+        self.aFindParts = make_action(bar, "Find parts / text (AI)", lambda: self.find_parts(),
+                                      None, "Find every component - or every line of text - "
+                                      "in an area, adjust the boxes, and add a Part present, "
+                                      "Verify text or Read text check for each one you keep",
                                       register_key=False, icon='sparkle')
         self._draw_hook = None
         self._part_finder = None
@@ -1690,6 +2485,8 @@ class JobEditor(QMainWindow):
         bar.widgetForAction(clear).setAccessibleName("Clear Results")
 
         self.tree = TerminalTree(self)
+        from vision_station.ui import modern
+        modern.style_check_list(self.tree)   # icon tiles and OK / NG pills
         self.tree.setMinimumWidth(240)       # names stay readable in a tiled window
         self.tree.setHeaderLabels(["Tool", "Status", "Time"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -1730,6 +2527,24 @@ class JobEditor(QMainWindow):
         c.deleteRequested.connect(self.delete_tools)
         c.shapeDrawn.connect(self._canvas_drawn)
         self._from_canvas = False
+        self._regions_editable = True
+        self._drawn_popup = None
+        # adding a check: its kind, while its area is being drawn
+        self._armed = None
+        c.escaped.connect(self.cancel_add)
+        self.display.modeSet.connect(self._mode_set)
+        # the job on its own teach picture: every check's result while it is
+        # set up, as the Find parts panel shows what it reads as boxes move
+        self._preview = None
+        self._preview_key = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(180)
+        self._preview_timer.timeout.connect(lambda: self.qb.station.preview(self.pid))
+        self.qb.station.previewResult.connect(self._previewed)
+        # a drawing tool taken up on a picture the checks are not drawn on
+        # brings the teach picture first
+        self.display.before_draw = self._before_draw
 
         # Laid out as Illustrator and Figma are: the image takes the window,
         # and one panel on the right holds the layers -- the tools, in the
@@ -1749,6 +2564,9 @@ class JobEditor(QMainWindow):
                              self.qb.open_tool_edit(self.pid, self.selected_tool()))
         self.fullEditor = full
         self.props.layout().insertWidget(2, full)
+        self.groupBar = GroupBar(self)
+        self.props.layout().insertWidget(3, self.groupBar)
+        self._multi_ids = None
         layers_title = QLabel("Layers")
         layers_title.setObjectName("sectionTitle")
         self.layersTitle = layers_title
@@ -1763,6 +2581,13 @@ class JobEditor(QMainWindow):
                                        on_save=lambda: self.qb.save_job(self.pid))
         ll.addWidget(self.guide)
         ll.addWidget(layers_title)
+        # forty checks from Find parts: one is found by typing part of its name
+        self.checkFilter = QLineEdit()
+        self.checkFilter.setObjectName("searchBox")
+        self.checkFilter.setPlaceholderText("Filter checks - name or kind")
+        self.checkFilter.setClearButtonEnabled(True)
+        self.checkFilter.textChanged.connect(self._filter_tree)
+        ll.addWidget(self.checkFilter)
         ll.addWidget(self.tree, 1)
         side = QSplitter(Qt.Vertical)
         side.addWidget(layers)
@@ -1848,7 +2673,7 @@ class JobEditor(QMainWindow):
         ty = simple.CheckPicker.pick(self, advanced=not self.simple)
         if not ty:
             return None
-        tid = self.add_tool(ty)
+        tid = self.begin_add(ty)
         self.display.canvas.setFocus()
         return tid
 
@@ -1861,8 +2686,17 @@ class JobEditor(QMainWindow):
         name = self.qb.job_name(self.pid)
         dirty = " *" if self.pid in self.qb.dirty else ""
         self.setWindowTitle("Job: %s%s" % (name, dirty))
-        res = self.qb.station.last.get(self.pid)
-        byid = {t["tool_id"]: t for t in (res or {}).get("tools", [])}
+        self._schedule_preview()
+        res = self._run_res()
+        shown = res
+        pv = self._preview_res()
+        # The list shows the last run -- unless the job was changed since: then
+        # what each check gives now, on the teach picture. (By the time a
+        # result came back it showed the teach picture's OK beside a run's NG.)
+        if pv is not None and (res is None or
+                               getattr(self, "_edited_at", 0) > res.get("timestamp", 0)):
+            shown = pv
+        byid = {t["tool_id"]: t for t in (shown or {}).get("tools", [])}
         cur = self.tree.currentItem()
         cur_id = cur.data(0, Qt.UserRole) if cur else None
         # Rebuilding the rows fires selection changes; they are not the
@@ -1890,6 +2724,7 @@ class JobEditor(QMainWindow):
                                   ("%.1f ms" % r["ms"] if r["ms"] < 1000 else fmt_ms(r["ms"]))
                                   if r else ""])
             it.setData(0, Qt.UserRole, t["id"])
+            it.setData(0, Qt.UserRole + 7, t["type"])      # modern.TYPE_ROLE
             it.setFlags(it.flags() & ~Qt.ItemIsDragEnabled & ~Qt.ItemIsDropEnabled)
             if plain:
                 it.setToolTip(0, "%s  (%s)\n%s\nF2 renames it, Del removes it" % (
@@ -1934,10 +2769,20 @@ class JobEditor(QMainWindow):
         if self.tree.currentItem() is None:
             self.tree.setCurrentItem(src)
         self.tree.blockSignals(False)
+        self.checkFilter.setVisible(len(p.spec.get("tools", [])) >= 6)
+        self._filter_tree(self.checkFilter.text())
         if plain:
             self.guide.update_state(p.spec.get("tools", []), res, self.pid in self.qb.dirty)
         self._status(res)
         self._show_selected()
+
+    def _filter_tree(self, text):
+        words = (text or "").lower().split()
+        for i in range(1, self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            tid = it.data(0, Qt.UserRole) or ""
+            hay = "%s %s %s" % (it.text(0), tid, it.data(0, Qt.UserRole + 7) or "")
+            it.setHidden(bool(words) and not all(w in hay.lower() for w in words))
 
     def _status(self, res):
         if not res:
@@ -1964,20 +2809,69 @@ class JobEditor(QMainWindow):
         tid = it.data(0, Qt.UserRole) if it else None
         return None if tid in (None, "__source__") else tid
 
-    def _show_selected(self):
+    # ------------------------------------------------------------ results shown
+    def _run_res(self):
+        """The last run, without checks deleted since: their old outlines and
+        tags stayed on the picture until the next run."""
         res = self.qb.station.last.get(self.pid)
+        if not res:
+            return res
+        ids = {t["id"] for t in self._tools()}
+        tools = [t for t in res.get("tools", []) if t["tool_id"] in ids]
+        return res if len(tools) == len(res.get("tools", [])) else dict(res, tools=tools)
+
+    def _preview_res(self):
+        pv = self._preview
+        if not pv:
+            return None
+        ids = {t["id"] for t in self._tools()}
+        return dict(pv, tools=[t for t in pv.get("tools", []) if t["tool_id"] in ids])
+
+    def _schedule_preview(self):
+        p = self.project()
+        if p is None or p.reference is None:
+            return
+        key = (json.dumps(p.spec, sort_keys=True, default=str), id(p.reference),
+               _examples_signature(p.folder))
+        if key != self._preview_key:
+            if self._preview_key is not None:
+                self._edited_at = time.time()    # a real edit, not the editor opening
+            self._preview_key = key
+            self._preview_timer.start()
+
+    def _previewed(self, pid, res):
+        if pid != self.pid:
+            return
+        self._preview = res
+        self.refresh()
+
+    def _results_here(self):
+        """The results that belong on the picture showing: the teach
+        picture's own on the teach picture, the last run's elsewhere."""
+        if self.display.current_record() == TEACH:
+            return self._preview_res()
+        return self._run_res()
+
+    def _show_selected(self):
+        res = self._run_res()
         src = self.qb.station.sources[self.pid]
         p = self.project()
         current = src.current if src.current is not None else p.reference
         tid = self.selected_tool()
-        # Show the last run when a different tool is selected; otherwise keep
-        # whatever record the operator chose, across runs.
+        # A check chosen in the list is shown on the teach picture, where it
+        # is drawn and taught; otherwise the record the operator chose stays,
+        # across runs. (It showed the last run, where the box could be moved
+        # but was taught from a different picture: the second part drawn on
+        # a new board failed the moment it was drawn.)
         switched = tid != getattr(self, "_shown_tid", object())
         self._shown_tid = tid
+        prefer = None
+        if switched and not self._from_canvas:
+            prefer = TEACH if tid is not None else ("LastRun.InputImage" if res else None)
         # a region clicked on the image keeps the image that is showing
-        self.display.set_records(records_for(res, tid, current),
-                                 prefer="LastRun.InputImage" if (res and switched and
-                                                                 not self._from_canvas) else None)
+        self.display.set_records(records_for(res, tid, current, reference=p.reference,
+                                             teach=self._preview_res()),
+                                 prefer=prefer)
         self.display.set_spaces(spaces_for(res))
         self._sync_job_regions()
         self._show_properties(tid, res)
@@ -2002,11 +2896,42 @@ class JobEditor(QMainWindow):
         if self.props.tool is not t:
             self.props.set_captures(readable_images(self._tools(), t["id"], ["default"]))
             self.props.load(t)
-        tres = next((x for x in (res or {}).get("tools", []) if x["tool_id"] == tid), None)
+        here = self._results_here() or res
+        tres = next((x for x in (here or {}).get("tools", []) if x["tool_id"] == tid), None)
         self.props.show_result(tres)
+        self._update_group_bar()
+
+    def _update_group_bar(self):
+        tools = self._tools()
+        sel = set(self.display.canvas.selected_ids())
+        multi = [t for t in tools if t["id"] in sel] if len(sel) > 1 else []
+        if len(multi) > 1:
+            self.groupBar.show_for(multi, "%d checks selected" % len(multi))
+            return
+        tid = self.selected_tool()
+        t = self._tool(tid) if tid else None
+        members = group_members(t, tools)
+        name = group_name(t) if t else ""
+        kind = LABELS.get(t["type"], (t["type"], ""))[0] if t else ""
+        self.groupBar.show_for(members, "Group %s  -  %d %s checks" % (name, len(members), kind))
+
+    def _group_edited(self, what):
+        """A change made to a whole group: one undo step, and the selected
+        check's own settings show it."""
+        self._from_canvas = True
+        try:
+            self._edited()
+        finally:
+            self._from_canvas = False
+        t = self.props.tool
+        if t is not None and any(t is m for m in self.groupBar.members):
+            self.props.load(t)
+        self._update_group_bar()
+        self.statusBar().showMessage(what, 6000)
 
     def _props_changed(self):
         """A setting changed in the properties panel."""
+        place_barcode_checks(self)
         self._from_canvas = True              # keep the selection on the image as it is
         try:
             self._edited()
@@ -2019,13 +2944,27 @@ class JobEditor(QMainWindow):
         is in that image's coordinates, not the camera's."""
         p = self.project()
         tid = self.selected_tool()
-        full = self.display.current_record() in FULL_FRAME_RECORDS
+        rec = self.display.current_record()
+        res = self._run_res()
+        img = self.display._records.get(rec, (None, None))[0]
+        full = rec in FULL_FRAME_RECORDS and regions_fit(rec, img, p.reference, res)
+        self._regions_editable = full
         tools = p.spec.get("tools", [])
         producers = {t["id"] for t in tools}
         regions = [t for t in tools if full and
                    (t.get("params", {}).get("capture") or "default") not in producers]
         c = self.display.canvas
-        c.sync_regions(regions, self.qb.station.last.get(self.pid))
+        c.sync_regions(regions, self._results_here() if rec == TEACH else res)
+        if self._armed:
+            pass                              # the note says what to draw
+        elif rec in ("Current.InputImage", "LastRun.InputImage") and not full \
+                and img is not None:
+            self.display.set_note(
+                "Boxes show where each check found its part on this picture. "
+                "Checks are drawn and moved on the Teach picture.",
+                ("Show Teach picture", lambda: self.display.record.setCurrentText(TEACH)))
+        else:
+            self.display.set_note(None)
         for item in c.regions.values():
             item.setFlag(item.GraphicsItemFlag.ItemIsMovable, True)
             item.setFlag(item.GraphicsItemFlag.ItemIsSelectable, True)
@@ -2036,8 +2975,14 @@ class JobEditor(QMainWindow):
     # ------------------------------------------------------------ the canvas
     def _canvas_selected(self, ids):
         """Clicking a region selects its tool in the list. Several regions
-        selected leave the list alone."""
+        selected leave the list alone, and the group bar takes them all."""
+        if len(ids) > 1:
+            self._multi_ids = list(ids)
+            self._update_group_bar()
+            return
+        self._multi_ids = None
         if len(ids) != 1 or ids[0] == self.selected_tool():
+            self._update_group_bar()
             return
         self._from_canvas = True
         try:
@@ -2066,6 +3011,7 @@ class JobEditor(QMainWindow):
             return
         t["params"]["roi"] = list(roi)
         if self._changed_since_recorded():
+            self._teach(tid)
             self._edited_from_canvas()
 
     def _canvas_angle(self, tid, deg):
@@ -2098,9 +3044,192 @@ class JobEditor(QMainWindow):
                 t["params"].pop("locked", None)
             self._edited_from_canvas()
 
+    # ------------------------------------------------------------ adding by drawing
+    NO_REGION = ("distance", "image_process", "data_analysis", "results_analysis",
+                 "intersect", "construct", "fixture_npoint", "calibrate_npoint")
+
+    def begin_add(self, ty):
+        """A check chosen from the menu or the picker: the pointer becomes a
+        cross and the check's area is drawn where it belongs -- anywhere,
+        any size. It used to appear as a box in the middle of the picture,
+        to be dragged into place every time. A box, ellipse (E) or polygon
+        (P); Esc cancels. Checks with no area of their own are added at once,
+        and so is one whose area was drawn first."""
+        if self.qb._locked_out():
+            return None
+        if ty in self.NO_REGION or getattr(self, "_pending_area", None) is not None \
+                or self.project().reference is None:
+            return self.add_tool(ty)
+        if self._drawn_popup is not None:
+            self._drawn_popup.close()
+        self.display.record.setCurrentText(TEACH)
+        self._armed = ty
+        shape = {"ocv": "draw_rect", "ocr": "draw_rect"}.get(ty, "draw_rect")
+        self.display._set_mode(shape)
+        self.display.aRect.setChecked(True)
+        name = LABELS.get(ty, (ty, ""))[0]
+        self.display.set_note("Drag on the picture where the %s check goes - E for an "
+                              "ellipse or circle, P for a polygon. Esc cancels." % name,
+                              ("Cancel", self.cancel_add))
+        self.statusBar().showMessage("Draw the area of the new %s check" % name, 8000)
+        self.display.canvas.setFocus()
+        return None
+
+    def cancel_add(self):
+        if not self._armed:
+            return
+        self._armed = None
+        self.display.set_note(None)
+        self.display._set_mode("select")
+        self.display.aPointer.setChecked(True)
+        self.statusBar().showMessage("Not added", 3000)
+
+    def _mode_set(self, mode):
+        # the pointer or the hand taken up while adding: the add is called off
+        if self._armed and not mode.startswith("draw"):
+            self.cancel_add()
+
+    # ------------------------------------------------------------ teaching
+    def _teach(self, tid, quiet=False):
+        text, msg = teach_check(self.project(), self._tool(tid), self._name_of(tid))
+        if msg and not (quiet and text):           # adding says it once, itself
+            self.statusBar().showMessage(msg, 10000)
+        t = self._tool(tid)
+        if text is not None and t is not None and self.props.tool is t:
+            self.props.load(t)
+        return text
+
+    # ------------------------------------------------------------ the good reference
+    def teach_with_best_light(self, wait=True):
+        """A new teach picture for this job from its camera, at the light
+        level that gives the clearest picture (QuickBuild.ai_reference). The
+        level becomes this job's own. Offered when an application or a job
+        is created; kept here for a job that already exists."""
+        st = self.qb.station
+        src = st.sources.get(self.pid)
+        if src is None or src.mode != "camera":
+            QMessageBox.information(self, "AI reference image", "This job does not take its "
+                                    "picture from the camera - set its image source to the "
+                                    "camera first.")
+            return None
+
+        def grab():
+            img = src.grab()
+            if img is None:
+                raise RuntimeError(src.last_error or "the camera gave no picture")
+            return img
+        # the raw camera picture: whether to take it in black and white is
+        # decided afresh from it, not from a picture already made so
+        keep, src.mono = src.mono, None
+        try:
+            got = self.qb.ai_reference("AI reference image", grab=grab)
+        finally:
+            src.mono = keep
+        if got is None:
+            return None
+        if not self.set_reference(image=got["image"]):
+            return None
+        p = self.project()
+        if got["level"] is not None:
+            p.spec["light_level"] = int(got["level"])
+            write_recipe_keys(p.path, {"light_level": int(got["level"])})
+            st.light.forget_job(self.pid)
+        if (got.get("mono") or None) != src.mono:
+            src.mono = got.get("mono") or None
+            p.spec["image_source"] = src.to_spec()
+            write_recipe_keys(p.path, {"image_source": p.spec["image_source"]})
+        self.statusBar().showMessage(got["message"], 15000)
+        self._last_best_light = got["result"]
+        return got
+
+    def set_reference(self, image=None, ask=False):
+        """Make a picture of a good part this inspection's reference. Checks
+        that compare (Part present, surface, colour...) compare with it, so
+        it must show a GOOD part; regions stay where they are."""
+        if ask:
+            path = self.qb._ask_image("Picture of a GOOD part")
+            if not path:
+                return None
+            image = self.qb._read_reference(path, "Good reference")
+        M = None
+        if image is None:
+            # the picture on screen: the last inspection, or the next picture
+            rec = self.display.current_record()
+            if rec in ("LastRun.InputImage", "Current.InputImage"):
+                image = self.display._records.get(rec, (None, None))[0]
+                res = self.qb.station.last.get(self.pid)
+                if rec == "LastRun.InputImage" and fixture_moved(res):
+                    M = next(iter(spaces_for(res).values()))
+        if image is None:
+            src = self.qb.station.sources.get(self.pid)
+            image = src.current if src is not None else None
+        if image is None:
+            QMessageBox.information(self, "Good reference", "No picture yet - run the "
+                                    "inspection once on a good part, or choose a file.")
+            return None
+        p = self.project()
+        old = p.reference
+        if old is not None and old.shape[:2] != image.shape[:2]:
+            QMessageBox.warning(self, "Good reference", "That picture is %d x %d; this "
+                                "inspection's regions were drawn on %d x %d. Use a picture "
+                                "from the same camera and position." % (
+                                    image.shape[1], image.shape[0], old.shape[1], old.shape[0]))
+            return None
+        p.set_reference(image.copy())
+        if M is not None:
+            # The part lies elsewhere on this picture: every region goes with
+            # it, by the transform the fixture found, so each stays on its
+            # feature. Left where they were, they sat beside their parts.
+            move_regions(self._tools(), M)
+            self.qb.mark_dirty(self.pid)
+        self.qb.job_changed(self.pid)
+        self.display.record.setCurrentText(TEACH)
+        self.statusBar().showMessage(
+            "Teach picture replaced%s - every check now compares with this picture" % (
+                ", and every box moved with the part" if M is not None else ""), 8000)
+        return True
+
+    # ------------------------------------------------------------ an area drawn first
+    def _keep_pending_area(self, kind, geom):
+        """A shape drawn with no check selected, shown dashed until a check
+        is added (which takes it) or another shape replaces it."""
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QColor, QPen, QPolygonF
+        self._drop_pending_area()
+        sc = self.display.canvas.sc
+        from vision_station.ui.canvas import SEL
+        pen = QPen(SEL)
+        pen.setCosmetic(True)
+        pen.setWidthF(2.0)
+        pen.setStyle(Qt.DashLine)
+        if kind == "polygon":
+            item = sc.addPolygon(QPolygonF([QPointF(*p) for p in geom["points"]]), pen)
+        elif kind == "ellipse":
+            item = sc.addEllipse(QRectF(*geom["roi"]), pen)
+        else:
+            item = sc.addRect(QRectF(*geom["roi"]), pen)
+        item.setZValue(40)
+        item.setToolTip("This area becomes the region of the next check you add")
+        self._pending_area = (kind, dict(geom), item)
+
+    def _drop_pending_area(self):
+        p = getattr(self, "_pending_area", None)
+        self._pending_area = None
+        if p is not None and p[2].scene() is not None:
+            p[2].scene().removeItem(p[2])
+
+    def _take_pending_area(self):
+        p = getattr(self, "_pending_area", None)
+        if p is None:
+            return None
+        self._drop_pending_area()
+        return p[0], p[1]
+
     def find_parts(self):
         """The Find parts panel beside this editor: one, brought forward."""
         from vision_station.ui.part_finder_panel import PartFinderPanel
+        # it finds on the teach picture, so that is what is shown under it
+        self.display.record.setCurrentText(TEACH)
         p = self._part_finder
         try:
             alive = p is not None and p.isVisible()
@@ -2117,22 +3246,82 @@ class JobEditor(QMainWindow):
         p.raise_()
         return p
 
+    # the checks offered on a box just drawn, most used first
+    QUICK_CHECKS = ("presence", "ocv", "ocr", "code_read", "count_template",
+                    "measure_length", "color_match", "defect_diff")
+
+    def _before_draw(self):
+        if not getattr(self, "_regions_editable", True):
+            self.display.record.setCurrentText(TEACH)
+            self.statusBar().showMessage("Drawing on the Teach picture - checks are taught "
+                                         "from the picture they are drawn on", 6000)
+
     def _canvas_drawn(self, kind, geom):
-        """A shape drawn on the image becomes the selected tool's region --
-        unless a panel (Find parts) asked for the next box drawn."""
+        """A shape drawn on the image: a new check goes there -- the kind is
+        chosen from a menu beside it. Unless a panel (Find parts) asked for
+        the next box drawn.
+
+        It used to become the selected check's region. Drawing a second part
+        with the first still selected moved the first onto it, and the
+        first check then failed on its own reference: "the second part I
+        draw shows NG at once". Moving a check is done by dragging its box,
+        or by "Move ... here" in the same menu."""
         hook = getattr(self, "_draw_hook", None)
         if hook is not None:
             self._draw_hook = None
             hook(kind, geom)
             return
+        if self._armed:
+            # the check chosen first: its area is what was just drawn
+            ty, self._armed = self._armed, None
+            self.display.set_note(None)
+            self._keep_pending_area(kind, geom)
+            return self.add_tool(ty)
+        # Kept, not thrown away: drawn first, it becomes the region of the
+        # check added next -- from this menu, the toolbar or the picker.
+        self._keep_pending_area(kind, geom)
+        self.statusBar().showMessage(
+            "Area kept - choose the check for it, or add one and it goes exactly here", 8000)
+        self._offer_checks()
+
+    def _offer_checks(self):
+        from PySide6.QtGui import QCursor
+        m = QMenu(self)
+        m.setObjectName("drawnMenu")
+        m.addSection("Add a check on this area")
+        for ty in self.QUICK_CHECKS:
+            if ty in LABELS:
+                a = m.addAction(icons.tool_icon(ty), LABELS[ty][0])
+                a.setToolTip(LABELS[ty][1])
+                a.triggered.connect(lambda _c=False, ty=ty: self.add_tool(ty))
+        m.addAction(icons.icon("add"), "More checks...", self.pick_check)
         tid = self.selected_tool()
-        if tid is None:
-            self.statusBar().showMessage("Select a tool first - the shape you draw becomes "
-                                         "its region", 6000)
+        t = self._tool(tid) if tid is not None else None
+        if t is not None and t.get("type") not in ("distance", "image_process"):
+            m.addSeparator()
+            m.addAction("Move %s here" % self._name_of(tid),
+                        lambda: self.move_tool_region(tid))
+        m.setToolTipsVisible(True)
+        self._drawn_popup = m
+        m.popup(QCursor.pos())
+        return m
+
+    def _name_of(self, tid):
+        t = self._tool(tid)
+        return simple.display_name(t) if (t is not None and self.simple) else tid
+
+    def move_tool_region(self, tid):
+        """The area drawn last becomes this check's region, and the check is
+        taught again from the picture it is drawn on."""
+        pending = self._take_pending_area()
+        t = self._tool(tid)
+        if pending is None or t is None:
             return
-        apply_drawn_region(self._tool(tid), kind, geom)
+        apply_drawn_region(t, *pending)
+        self._teach(tid)
         self._edited()
-        self.statusBar().showMessage("New %s region for %s" % (kind, tid), 4000)
+        self.select_tool(tid)
+        self.statusBar().showMessage("New %s region for %s" % (pending[0], tid), 4000)
 
     def _edited_from_canvas(self):
         """A region changed on the image: the recipe follows, and every other
@@ -2296,13 +3485,22 @@ class JobEditor(QMainWindow):
             else:
                 params["roi"] = [int(w * .375), int(h * .375), int(w * .25), int(h * .25)]
         tid = "%s_%d" % (ty, n)
-        tools.append({"id": tid, "type": ty, "params": params})
+        spec = {"id": tid, "type": ty, "params": params}
+        pending = self._take_pending_area()
+        if pending is not None and ty not in ("distance", "image_process"):
+            apply_drawn_region(spec, *pending)       # the area drawn before adding
+        tools.append(spec)
+        taught = self._teach(tid, quiet=True)
         self._edited()
         # The new tool is the one being worked on: selected, with its region
         # on the display. It was added at the bottom of the tree unselected,
         # and in a long job off screen, so nothing visibly happened.
         self.select_tool(tid)
-        if self.simple:
+        if taught:
+            self.statusBar().showMessage("Added %s - it expects '%s', read from its box "
+                                         "(change it under Settings)" % (
+                                             self._name_of(tid), taught), 10000)
+        elif self.simple:
             self.statusBar().showMessage(
                 "Added %s - drag the blue box over the feature, then say what to expect "
                 "under Settings" % simple.display_name(tools[-1]), 8000)
@@ -2374,7 +3572,7 @@ class JobEditor(QMainWindow):
 
     def toggle_continuous(self):
         if self.aCont.isChecked():
-            self.qb.station.start_continuous([self.pid])
+            self.qb.station.start_continuous([self.pid], gate=False)
         else:
             self.qb.station.stop()
 
@@ -2893,15 +4091,62 @@ def _panel(*widgets, margins=(0, 0, 0, 0), spacing=0):
 
 
 # ================================================================ QuickBuild
+class _ScanKeys(QObject):
+    """A USB scanner types its code as keys into whatever has the focus.
+    While the Run view is in front and no text box has the focus, those keys
+    go to the barcode bar -- a scan is never lost because someone clicked
+    the picture or the results queue last."""
+
+    def __init__(self, qb):
+        super().__init__(qb)
+        self.qb = qb
+
+    def eventFilter(self, obj, e):
+        if e.type() != QEvent.KeyPress:
+            return False
+        qb = self.qb
+        bar = getattr(qb, "barcodeBar", None)
+        if bar is None or not bar.isVisible():
+            return False
+        # keys meant for this window -- not a dialog or another window
+        win = obj.window() if isinstance(obj, QWidget) else None
+        if win is not qb:
+            return False
+        from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit
+        # the widget the key went to: a text box keeps its own typing
+        if obj is bar.field or isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit,
+                                                QAbstractSpinBox)):
+            return False
+        if isinstance(obj, QWidget) and isinstance(obj.parentWidget(), QAbstractSpinBox):
+            return False
+        if qb.mdi.activeSubWindow() not in (None, qb.runSub):
+            return False
+        text = e.text()
+        if e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            return False
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if bar.field.text().strip():
+                bar.field.setFocus()
+                bar._enter()
+                return True
+            return False
+        if text and text.isprintable():
+            bar.take_keys(text)
+            return True
+        return False
+
+
 class QuickBuild(QMainWindow):
     """The application: its jobs, a run display per job, and the queues."""
+    # where the window's size and panel layout are kept
+    LAYOUT_KEYS = ("geometry", "state")
 
     def __init__(self, root=None):
         global camera_settings_store
         camera_settings_store = self._settings
         super().__init__()
         _unique_name(self, "quickBuild")
-        self.root = root or os.path.join(HERE, "projects")
+        self.root = root or os.environ.get("VS_PROJECTS") or os.path.join(HERE, "projects")
         self.station = Station(self.root)
         try:
             from vision_station.ui.settings_dialog import load_result_settings
@@ -2909,9 +4154,15 @@ class QuickBuild(QMainWindow):
         except Exception as e:
             print("[settings] result saving not loaded: %s" % e)
         self.station.jobResult.connect(self._job_result)
+        self.station.barcodeNeeded.connect(self._barcode_needed)
         self.station.runFinished.connect(self._run_finished)
         self.station.runError.connect(self._job_error)
         self.station.warmedUp.connect(self._warmed_up)
+        # while a model is being taught, nothing else runs (the training
+        # window is modal; this stops a continuous run's timer too)
+        self.station.before_run = lambda pids: not self._adv_gating
+        self._adv_postponed = set()          # cancelled or impossible: not again this session
+        self._adv_gating = False
         self.dirty = set()
         self._job_editors = {}
         self._tool_editors = {}
@@ -2934,6 +4185,8 @@ class QuickBuild(QMainWindow):
         self._build_status_bar()
         self._build_menus()
         self._build_simple()
+        self._load_barcode()
+        self._load_light()
 
         self._default_state = self.saveState(LAYOUT_VERSION)
         self._restore_layout()
@@ -2967,6 +4220,29 @@ class QuickBuild(QMainWindow):
                                     register_key=False, check=True, icon='run_continuous')
         bar.widgetForAction(self.aRunOnce).setObjectName("accentButton")
         bar.widgetForAction(self.aRunCont).setObjectName("runningButton")
+        # Run's dropdown: Normal run (the default) or Model teaching run --
+        # the job's own AI model trained (core/advanced.py). Teaching is
+        # offered only with Settings > Use advanced model for training on,
+        # and Run goes back to normal after it: an operator never trains by
+        # pressing Run.
+        self.run_mode = "normal"
+        runMenu = QMenu(self)
+        runMenu.setObjectName("runModeMenu")
+        grp = QActionGroup(self)
+        grp.setExclusive(True)
+        self.aRunNormal = runMenu.addAction("Normal run")
+        self.aRunTeach = runMenu.addAction("Model teaching run")
+        for a in (self.aRunNormal, self.aRunTeach):
+            a.setCheckable(True)
+            grp.addAction(a)
+        self.aRunNormal.setChecked(True)
+        self.aRunNormal.triggered.connect(lambda: self.set_run_mode("normal"))
+        self.aRunTeach.triggered.connect(lambda: self.set_run_mode("teach"))
+        runMenu.aboutToShow.connect(self._refresh_run_menu)
+        rb = bar.widgetForAction(self.aRunOnce)
+        rb.setMenu(runMenu)
+        rb.setPopupMode(QToolButton.MenuButtonPopup)
+        self._refresh_run_menu()
         self._accent_run_icon()
         bar.addSeparator()
         # secondary commands as icons, named in their tooltips and to screen
@@ -2983,7 +4259,16 @@ class QuickBuild(QMainWindow):
                                  "Live Camera - the camera's picture for aiming, positioning "
                                  "the part, focus and exposure. Nothing is inspected.",
                                  register_key=False, icon='image_source')
-        for a in self._secondary + [self.aLive]:
+        self.aBarcode = make_action(bar, "Barcode", lambda: self.barcode_settings(), None,
+                                    "Barcode check - inspect a part only after its barcode "
+                                    "is scanned, and keep its pictures in a folder named "
+                                    "after it", register_key=False, check=True,
+                                    icon='barcode')
+        self.aFind = make_action(bar, "Find picture", lambda: self.find_picture(), "Ctrl+F",
+                                 "Find picture - type or scan a barcode and see its "
+                                 "pictures; double-click one to open its folder",
+                                 icon='find_picture')
+        for a in self._secondary + [self.aLive, self.aBarcode, self.aFind]:
             b = bar.widgetForAction(a)
             b.setToolButtonStyle(Qt.ToolButtonIconOnly)
             b.setObjectName("toolbarIcon")
@@ -3095,7 +4380,7 @@ class QuickBuild(QMainWindow):
         # One Toolbox for the application, as VisionPro has: it adds to the
         # active job. A Toolbox inside every Job Editor squeezed the tool tree
         # to a sliver once the editors shared the workspace.
-        self.toolbox = toolbox_tree(self._toolbox_add)
+        self.toolbox = toolbox_tree(lambda ty: self._toolbox_add(ty, draw=True))
         self.toolbox.setToolTip("")
         self.toolSearch = _tool_search(self.toolbox)
         hint = QLabel("Double-click a tool to add it to the job in front")
@@ -3176,6 +4461,17 @@ class QuickBuild(QMainWindow):
         rp.setContentsMargins(10, 10, 10, 0)
         rp.setSpacing(0)
         rp.addWidget(self.banner)
+        # barcode-gated inspection: what to scan, and what the scan did
+        from vision_station.ui.barcode_panel import BarcodeBar, SerialScanner
+        self.barcodeBar = BarcodeBar()
+        self.barcodeBar.scanned.connect(self.barcode_scanned)
+        self.barcodeBar.settingsRequested.connect(self.barcode_settings)
+        self.barcodeBar.hide()
+        rp.addSpacing(8)
+        rp.addWidget(self.barcodeBar)
+        self.scanner = SerialScanner(self)
+        self.scanner.scanned.connect(self.barcode_scanned)
+        self.scanner.error.connect(lambda m: self.statusBar().showMessage("Scanner: " + m, 10000))
         rp.addWidget(self.grid, 1)
         self.runSub = _RunViewFrame()
         self.runSub.setWidget(self.runPage)
@@ -3246,6 +4542,8 @@ class QuickBuild(QMainWindow):
         self.aParallel.toggled.connect(self._set_parallel)
         r.addSeparator()
         r.addAction(icons.icon("history"), "Production History", self.show_history)
+        r.addAction(icons.icon("find_picture"), "Find Picture...   (Ctrl+F)",
+                    lambda: self.find_picture())
         r.addSeparator()
         self.aOperator = r.addAction(icons.icon("job"), "Operator Mode", self.toggle_operator_mode)
         self.aSupervisor = r.addAction("Set Supervisor Password...", self.set_supervisor_password)
@@ -3565,6 +4863,151 @@ class QuickBuild(QMainWindow):
         if not self.advanced:
             self._sync_tabs()
 
+    def _load_light(self):
+        try:
+            from vision_station.hardware import light
+            self.apply_light(light.load(self._settings()), save=False)
+        except Exception as e:
+            print("[settings] light settings not loaded: %s" % e)
+
+    def apply_light(self, cfg, save=True):
+        """Settings > Light."""
+        from vision_station.hardware import light
+        cfg = dict(light.DEFAULTS, **(cfg or {}))
+        if save:
+            light.save(self._settings(), cfg)
+        lt = self.station.light
+        if not getattr(self, "_light_saver", None):
+            # a level found by Keep adjusted or Adjust now is the starting
+            # level next time
+            def keep(_level):
+                try:
+                    light.save(self._settings(), lt.cfg)
+                except Exception:
+                    pass
+            self._light_saver = keep
+            lt.on_level.append(keep)
+        lt.configure(cfg)
+        try:
+            self.hold_exposure()
+        except Exception as e:
+            print("[light] camera exposure not held: %s" % e)
+        try:
+            self._keep_camera_balance()
+        except Exception as e:
+            print("[light] camera white balance not set: %s" % e)
+        err = self.station.light.error
+        if cfg.get("enabled") and err:
+            self.statusBar().showMessage("Light: %s" % err, 10000)
+        return cfg
+
+    def hold_exposure(self, index=0):
+        """With Vision Station setting the light, the camera's automatic
+        exposure and gain are switched off, at its manual values. Left on,
+        they undid every change of the light: the camera answered a brighter
+        light with a shorter exposure and lower gain, a dimmer one with more
+        -- one light level gave pictures 0.29, 0.44 and 0.88 grey, the AI
+        chose a level from pictures the camera had already corrected, and
+        Keep adjusted chased the camera. True when they were on."""
+        lt = self.station.light
+        if not lt.enabled:
+            return False
+        from vision_station.ui.settings_dialog import (load_camera_settings,
+                                                       save_camera_settings)
+        qs = self._settings()
+        s = load_camera_settings(qs, index)
+        if s is None or not (s.auto_exposure or s.auto_gain):
+            return False
+        s = s.copy()
+        s.auto_exposure = False
+        s.auto_gain = False
+        save_camera_settings(qs, index, s)
+        apply_camera_settings(index, s)
+        self._camera_note("Camera: automatic exposure and gain switched off (exposure %g ms, "
+                          "gain %g) - with Vision Station setting the light, they undid every "
+                          "change of it" % (s.exposure_ms, s.gain_db))
+        return True
+
+    def _camera_note(self, text):
+        """What was done to the camera for the light, in the status bar --
+        added to a note shown a moment ago rather than replacing it."""
+        now = time.time()
+        prev = getattr(self, "_camera_noted", (0.0, ""))
+        if now - prev[0] < 2.0 and prev[1] and text not in prev[1]:
+            text = prev[1] + ".   " + text.replace("Camera: ", "")
+        self._camera_noted = (now, text)
+        self.statusBar().showMessage(text, 15000)
+
+    def _keep_camera_balance(self, index=0):
+        """A light switched off between runs and a camera balancing white
+        continuously do not mix: in the dark the camera keeps re-balancing
+        on a black picture, and every run's picture starts from whatever
+        colour gains it drifted to. Measured on the acA5472-5gc: steady at
+        0.43 grey with the light left on; 0.30-0.41 after an off and on with
+        continuous balance, 0.43 every time without -- and Keep adjusted
+        then chased the camera's drift.
+
+        So, when the light is switched, white is balanced once with the
+        light on and then held, and the camera's setting says so. Done in
+        the background; True when it was needed."""
+        lt = self.station.light
+        if not lt.enabled or lt.cfg.get("always_on"):
+            return False
+        from vision_station.ui.settings_dialog import (load_camera_settings,
+                                                       save_camera_settings)
+        qs = self._settings()
+        s = load_camera_settings(qs, index)
+        if s is None or not s.auto_white_balance:
+            return False
+        s = s.copy()
+        s.auto_white_balance = False
+        save_camera_settings(qs, index, s)
+        self._camera_note(
+            "Camera: white balanced once with the light on, then held - balancing "
+            "continuously, it drifted in the dark between runs")
+
+        def work():
+            import time as _t
+            handle = None
+            try:
+                handle = open_camera(index)
+                t0 = _t.time()
+                while getattr(handle, "backend", None) is None and _t.time() - t0 < 10:
+                    _t.sleep(0.05)
+                if getattr(handle, "backend", None) != "pylon":
+                    return
+                apply_camera_settings(index, s)          # continuous balance off
+                lt.hold("balance")
+                lt.send_level(BALANCE_LEVEL)             # lit, not burnt out
+                lt.settle()
+                handle.frame_after(None, settle=3, timeout_s=5)   # lit frames only
+                # balanced on lit frames only: balanced in the dark, every
+                # picture came out pink; with the gains at 1, green
+                handle.call(lambda pc: pc.white_balance_once() if pc else False)
+                t0 = _t.time()                           # Once ends by itself
+                while _t.time() - t0 < 4:
+                    v = handle.call(lambda pc: str(pc.cam.BalanceWhiteAuto.GetValue())
+                                    if pc else "Off")
+                    if v != "Once":
+                        break
+                    _t.sleep(0.2)
+            except Exception as e:
+                print("[light] white balance once: %s" % e)
+            finally:
+                lt.release("balance")
+                if handle is not None:
+                    handle.stop()
+        import threading
+        threading.Thread(target=work, name="balance-once", daemon=True).start()
+        return True
+
+    def _load_barcode(self):
+        try:
+            from vision_station.core import barcode as rules
+            self.apply_barcode(rules.load(self._settings()), save=False)
+        except Exception as e:
+            print("[settings] barcode settings not loaded: %s" % e)
+
     def _sub_activated(self, _sub):
         if self._closing:
             return
@@ -3773,6 +5216,8 @@ class QuickBuild(QMainWindow):
             d.canvas.mouseDoubleClickEvent = (lambda e, pid=pid: self.open_job_editor(pid))
             d.canvas.setToolTip("Double-click to open the Job Editor")
             p = self.station.projects[pid]
+            d.canvas.tag_min_px = 13.0           # read from a step away
+            d.canvas.tag_max_px = 30.0
             d.set_records({"Reference": (p.reference, [])})
             tile.edit.setVisible(not getattr(self, "operator_mode", False))
             self.gridLayout.addWidget(tile, i // cols, i % cols)
@@ -3847,7 +5292,8 @@ class QuickBuild(QMainWindow):
             self.statusBar().showMessage("Still inspecting - the next run starts when "
                                          "this one finishes", 3000)
             return
-        self.station.run_once([pid])
+        # a job editor's run is for teaching: never held for a barcode
+        self.station.run_once([pid], gate=False)
 
     def toggle_continuous(self):
         if self.aRunCont.isChecked():
@@ -3866,6 +5312,13 @@ class QuickBuild(QMainWindow):
         _title, d = self._displays.get(pid, (None, None))
         tile = self._tiles.get(pid)
         if d is not None:
+            # every inspection is shown whole: a tile zoomed into once kept
+            # that zoom, and every later part was shown cut off
+            d.canvas.fit_mode = True
+            # With many checks the OK tags buried the NG one the operator is
+            # looking for (41 "OK" round two "NG"): then only failures are
+            # labelled. Every outline stays, blue or red.
+            d.canvas.tags_only_failures = len(res.get("tools", [])) > RUN_VIEW_ALL_TAGS
             d.set_records(records_for(res))
             d.set_spaces(spaces_for(res))
         ok = res["verdict"] == "PASS"
@@ -3875,9 +5328,20 @@ class QuickBuild(QMainWindow):
                 failed = simple.failed_names(res, p.spec.get("tools", []) if p else [])
             else:
                 failed = [t["tool_id"] for t in res["tools"] if t["status"] != "pass"]
-            tile.show_verdict("pass" if ok else "fail", "ACCEPT" if ok else "REJECT",
-                              "%s%s" % (fmt_ms(res["total_ms"]), ("   failed: " + ", ".join(failed))
-                                        if failed else ""))
+            if res.get("barcode_ng"):
+                # the part does not carry the scanned code: said as such
+                tile.show_verdict("fail", "NG", "%s   %s" % (fmt_ms(res["total_ms"]),
+                                                            res["barcode_ng"]))
+            else:
+                tile.show_verdict("pass" if ok else "fail", "ACCEPT" if ok else "REJECT",
+                                  "%s%s" % (fmt_ms(res["total_ms"]),
+                                            ("   failed: " + ", ".join(failed)) if failed else ""))
+        if res.get("barcode_ng"):
+            self.statusBar().showMessage(res["barcode_ng"], 15000)
+        if res.get("barcode") and self.station.barcode.last:
+            code, verdict, folder = self.station.barcode.last
+            self.barcodeBar.done(code, verdict, folder,
+                                 "NG - Barcode not good" if res.get("barcode_ng") else None)
         self.sCycle.setText("Last cycle %s" % fmt_ms(res["total_ms"]))
         self.kpi["cycle"].set(fmt_ms(res["total_ms"]))
         self._job_errors.pop(pid, None)
@@ -3900,8 +5364,112 @@ class QuickBuild(QMainWindow):
             tile.show_verdict("warn", "ERROR", msg)
         self._job_errors[pid] = msg
         self._refresh_banner()
+        if "camera" in msg.lower() and not getattr(self, "_firewall_asked", False):
+            self._firewall_asked = True          # asked once a session, never again
+            QTimer.singleShot(0, self._offer_firewall)
+
+    def _offer_firewall(self):
+        """The packaged program without its firewall rule opens a GigE camera
+        but no picture ever arrives (hardware/firewall.py): say so, and offer
+        the one-time fix."""
+        from vision_station.hardware import firewall
+        try:
+            if not firewall.should_offer():
+                return
+        except Exception:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(QMessageBox.Warning, "Camera blocked by Windows Firewall",
+                          firewall.EXPLANATION, parent=self)
+        allow = box.addButton("Allow...", QMessageBox.AcceptRole)
+        box.addButton("Not now", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is allow:
+            if firewall.allow():
+                self.statusBar().showMessage("Allowed - the camera's pictures now reach "
+                                             "Vision Station. Run again.", 10000)
+            else:
+                QMessageBox.information(self, "Not allowed",
+                                        "The rule was not added. Ask IT to allow %s for "
+                                        "inbound connections." % firewall.program())
+
+    # ------------------------------------------------------------ barcode
+    def apply_barcode(self, cfg, save=True):
+        """Settings > Barcode, or the Run view's dialog."""
+        from vision_station.core import barcode as rules
+        cfg = dict(rules.DEFAULTS, **(cfg or {}))
+        if save:
+            rules.save(self._settings(), cfg)
+        self.station.barcode.configure(cfg)
+        on = bool(cfg["enabled"])
+        self.barcodeBar.setVisible(on)
+        self.barcodeBar.set_rule(cfg)
+        if hasattr(self, "aBarcode"):
+            self.aBarcode.setChecked(on)
+        self.scanner.close()
+        if on and cfg["source"] == "serial" and cfg["port"]:
+            if self.scanner.open(cfg["port"], cfg["baud"]):
+                self.statusBar().showMessage("Scanner on %s" % cfg["port"], 5000)
+        app = QApplication.instance()
+        if on and cfg["source"] == "keyboard":
+            if getattr(self, "_scan_keys", None) is None:
+                self._scan_keys = _ScanKeys(self)
+                app.installEventFilter(self._scan_keys)
+        elif getattr(self, "_scan_keys", None) is not None:
+            app.removeEventFilter(self._scan_keys)
+            self._scan_keys = None
+        if on:
+            self.barcodeBar.waiting()
+            QTimer.singleShot(0, self.barcodeBar.field.setFocus)
+        return cfg
+
+    def barcode_settings(self):
+        from vision_station.core import barcode as rules
+        from vision_station.ui.barcode_panel import BarcodeDialog
+        from vision_station.ui.settings_dialog import load_result_settings
+        qs = self._settings()
+        dlg = BarcodeDialog(self, rules.load(qs), self.apply_barcode,
+                            load_result_settings(qs).get("folder", ""))
+        dlg.show()
+        self._barcode_dialog = dlg
+        if hasattr(self, "aBarcode"):
+            self.aBarcode.setChecked(self.station.barcode.enabled)   # the dialog decides
+        return dlg
+
+    def barcode_scanned(self, raw):
+        """A code from the bar, the keyboard scanner or the serial one."""
+        gate = self.station.barcode
+        if not gate.enabled:
+            return False
+        ok, code, why = gate.scan(raw)
+        if not ok:
+            self.barcodeBar.refused(code, why)
+            QApplication.beep()
+            self.statusBar().showMessage("Wrong barcode %s: %s" % (code, why), 8000)
+            return False
+        busy = self.station.running
+        auto = gate.cfg.get("auto_run", True)
+        self.barcodeBar.accepted(code, running=auto)
+        self.statusBar().showMessage("Barcode %s accepted%s" % (
+            code, " - inspecting" if auto and not busy else
+            " - inspected when this part is done" if auto else " - press Run"), 6000)
+        if auto and not busy:
+            self.run_once()
+        return True
+
+    def _barcode_needed(self):
+        if self.station.continuous:
+            self.barcodeBar.waiting("Waiting for the next part's barcode")
+        else:
+            self.barcodeBar.needed()
+            self.statusBar().showMessage("Scan the part's barcode first - barcode checking is "
+                                         "on (Settings > Barcode)", 6000)
 
     def _run_finished(self):
+        gate = self.station.barcode
+        if gate.enabled and gate.pending and gate.cfg.get("auto_run", True):
+            # a code scanned during the last inspection: its part is next
+            QTimer.singleShot(0, self.run_once)
         if not self.station.continuous:
             self.aRunCont.setChecked(False)
             for ed in self._job_editors.values():
@@ -3929,14 +5497,19 @@ class QuickBuild(QMainWindow):
         self._queue_rows = src
         posted = list(self.station.posted)
         plain = self.simple
+        # the barcode column while barcodes are checked, or any run in the
+        # queue has one
+        codes = self.station.barcode.enabled or any(e.get("barcode") for e in src)
         heads = ["Time", "Inspection" if plain else "Job", "Result", "Cycle",
                  "Failed checks" if plain else "Failed tools"] + \
+            (["Barcode"] if codes else []) + \
             [self.posted_label(item) for item in posted]
+        first = 6 if codes else 5                 # the first posted value's column
         if self.queue.columnCount() != len(heads):
             self.queue.setColumnCount(len(heads))
         self.queue.setHorizontalHeaderLabels(heads)
         for k, item in enumerate(posted):
-            self.queue.horizontalHeaderItem(5 + k).setToolTip(item)
+            self.queue.horizontalHeaderItem(first + k).setToolTip(item)
         self.queue.setRowCount(len(src))
         for i, e in enumerate(src):
             name = self.job_name(e["job"])
@@ -3944,7 +5517,8 @@ class QuickBuild(QMainWindow):
             if plain:
                 failed = [self.check_name(e["job"], tid) for tid in failed]
             vals = [e["time"], name, "Accept" if e["verdict"] == "PASS" else "Reject",
-                    fmt_ms(e["ms"]), ", ".join(failed)]
+                    fmt_ms(e["ms"]), ", ".join(failed)] + \
+                ([e.get("barcode") or ""] if codes else [])
             for k, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 if k == 2:
@@ -3956,7 +5530,7 @@ class QuickBuild(QMainWindow):
             for k, item in enumerate(posted):
                 v = e.get("posted", {}).get(item)
                 txt = "" if v is None else ("%.4g" % v if isinstance(v, float) else str(v))
-                self.queue.setItem(i, 5 + k, QTableWidgetItem(txt))
+                self.queue.setItem(i, first + k, QTableWidgetItem(txt))
         if chosen is not None:
             self.queue.blockSignals(True)
             if any(e is chosen for e in src):
@@ -3973,19 +5547,27 @@ class QuickBuild(QMainWindow):
             return
         if self.queue.selectionModel().selectedRows():
             return
-        e = self._queue_rows[0]
-        if e["jpg"]:
-            img = cv2.imdecode(np.frombuffer(e["jpg"], np.uint8), cv2.IMREAD_COLOR)
-            self.queueDisplay.set_records({"Record": (img, e["tools"])})
+        self._show_queue_entry(self._queue_rows[0])
+
+    def _show_queue_entry(self, e):
+        """A queue entry's preview, with its results drawn where they were
+        found: the preview is enlarged back to the frame's size (nearest
+        pixel, a few ms) so the results' full-frame coordinates fit it."""
+        if not e.get("jpg"):
+            return
+        img = cv2.imdecode(np.frombuffer(e["jpg"], np.uint8), cv2.IMREAD_COLOR)
+        size = e.get("size")
+        if img is not None and size and (img.shape[1], img.shape[0]) != tuple(size):
+            img = cv2.resize(img, tuple(size), interpolation=cv2.INTER_NEAREST)
+        self.queueDisplay.canvas.fit_mode = True
+        self.queueDisplay.canvas.tags_only_failures = len(e["tools"]) > RUN_VIEW_ALL_TAGS
+        self.queueDisplay.set_records({"Record": (img, e["tools"])})
 
     def _queue_selected(self):
         rows = self.queue.selectionModel().selectedRows()
         if not rows or not hasattr(self, "_queue_rows"):
             return
-        e = self._queue_rows[rows[0].row()]
-        if e["jpg"]:
-            img = cv2.imdecode(np.frombuffer(e["jpg"], np.uint8), cv2.IMREAD_COLOR)
-            self.queueDisplay.set_records({"Record": (img, e["tools"])})
+        self._show_queue_entry(self._queue_rows[rows[0].row()])
 
     def reset_counts(self):
         self.station.counts = {"accept": 0, "reject": 0}
@@ -4008,6 +5590,16 @@ class QuickBuild(QMainWindow):
             if self.station.is_job_app():
                 m.addAction("Rename...", lambda: self.rename_job(pid))
                 m.addAction("Remove...", lambda: self.remove_job(pid))
+            m.addSeparator()
+            from vision_station.core import advanced
+            p = self.station.projects.get(pid)
+            trained = p is not None and advanced.is_trained(p.spec, p.folder)
+            if self.advanced_training_on():
+                a = m.addAction("Model teaching run (retrain)..." if trained else
+                                "Model teaching run...", lambda: self.teaching_run([pid]))
+                a.setEnabled(not self.station.running)
+            if trained:
+                m.addAction("Remove advanced model...", lambda: self.remove_advanced(pid))
             m.addSeparator()
         a = m.addAction("Add Job...", self.add_job)
         a.setEnabled(self.station.is_job_app())
@@ -4036,15 +5628,373 @@ class QuickBuild(QMainWindow):
                                 os.path.basename(image_path))
         return img
 
-    def new_application(self, name=None, image_path=None):
-        """A new application: a job folder with a first job made from an image."""
+    # ------------------------------------------------------------ advanced training
+    ADVANCED_KEY = "advanced_training/use"
+
+    def advanced_training_on(self):
+        """Settings > General > Use advanced model for training."""
+        v = self._settings().value(self.ADVANCED_KEY, False)
+        return v is True or str(v).lower() in ("true", "1")
+
+    def advanced_model_size(self):
+        """Settings > General > AI model size: small (default), medium, large."""
+        from vision_station.core.advanced import SIZES
+        v = str(self._settings().value("advanced_training/model", "small") or "small")
+        return v if v in SIZES else "small"
+
+    def set_advanced_model_size(self, size):
+        self._settings().setValue("advanced_training/model", size)
+
+    def set_advanced_training(self, on):
+        self._settings().setValue(self.ADVANCED_KEY, bool(on))
+        if hasattr(self, "aRunTeach"):
+            self._refresh_run_menu()
+
+    def _advanced_request(self, extra):
+        """The recipe keys of a new job, with the advanced request when the
+        setting is on."""
+        extra = dict(extra or {})
+        if self.advanced_training_on():
+            extra["advanced"] = {"requested": True, "trained": False}
+        return extra
+
+    def _refresh_run_menu(self):
+        on = self.advanced_training_on()
+        self.aRunTeach.setEnabled(on)
+        self.aRunTeach.setToolTip(
+            "Takes pictures of the good part and trains the job's own AI model"
+            if on else "Switch on Settings > General > Use advanced model for training first")
+        if not on and self.run_mode == "teach":
+            self.set_run_mode("normal")
+
+    def set_run_mode(self, mode):
+        """'normal' (inspect) or 'teach' (Model teaching run). Teaching only
+        with the advanced training setting on."""
+        if mode == "teach" and not self.advanced_training_on():
+            mode = "normal"
+        self.run_mode = mode
+        teach = mode == "teach"
+        (self.aRunTeach if teach else self.aRunNormal).setChecked(True)
+        self.aRunOnce.setText("Teach model" if teach else "Run")
+        self.aRunOnce.setToolTip("Model teaching run: take pictures of the good part and train "
+                                 "the job's own AI model" if teach else
+                                 "Inspect once - the job in front, or every job")
+        self.statusBar().showMessage(
+            "Run is set to Model teaching run: press Run to teach the AI model" if teach
+            else "Run is set to Normal run", 5000)
+        return mode
+
+    def teaching_run(self, pids=None):
+        """Model teaching run: each job (the one in front, or every job) has
+        its AI model taught in the training window. Run is set back to
+        Normal run afterwards. {pid: outcome}."""
+        if not self.advanced_training_on():
+            self.set_run_mode("normal")
+            return {}
+        if self._nothing_to_run() or self._adv_gating:
+            return {}
+        if self.station.running or self.station.continuous:
+            self.statusBar().showMessage("Stop the inspection before a model teaching run",
+                                         5000)
+            return {}
+        from vision_station.core import advanced
+        ok, why = advanced.can_train()
+        if not ok:
+            QMessageBox.information(self, "Model teaching run",
+                                    "The AI model cannot be taught on this PC: %s." % why)
+            self.set_run_mode("normal")
+            return {}
+        pids = [p for p in (pids or [j["pid"] for j in self.station.jobs]) if p]
+        out = {}
+        self._adv_gating = True
+        try:
+            for pid in pids:
+                out[pid] = self.train_advanced(pid)
+                if out[pid] == "cancelled":
+                    break                       # cancelled: not the next job either
+        finally:
+            self._adv_gating = False
+            self.set_run_mode("normal")
+        return out
+
+    def train_advanced(self, pid, grab=None, session_kw=None):
+        """Train job pid's advanced model now, in the training window.
+        "ok" | "cancelled" | "failed" | None (could not start)."""
+        from vision_station.core import advanced
+        from vision_station.ui.advanced_training import run_training
+        if pid in self.dirty and self.save_job(pid) is False:
+            self._adv_postponed.add(pid)
+            return None
+        p = self.station.projects.get(pid)
+        if p is None:
+            return None
+        if not advanced.state_of(p.spec).get("requested"):
+            p.spec["advanced"] = {"requested": True, "trained": False}
+            self.save_job(pid)
+            p = self.station.projects[pid]
+        src = self.station.sources.get(pid)
+        if grab is None:
+            if src is None:
+                return None
+            # the camera opened here, in the window's thread, before the
+            # training's own thread takes pictures from it
+            first = src.grab()
+            if first is None:
+                QMessageBox.warning(self, "Advanced training",
+                                    "No picture for the training: %s" % (src.last_error or
+                                                                         "the source gave none"))
+                self._adv_postponed.add(pid)
+                return "failed"
+
+            def grab():
+                img = src.grab()
+                if img is None:
+                    raise RuntimeError(src.last_error or "the camera gave no picture")
+                return img
+        cam = src is not None and src.mode == "camera"
+        kw = dict(session_kw or {})
+        kw.setdefault("model_size", self.advanced_model_size())
+        sess = advanced.Session(p, grab, light=self.station.light if cam else None,
+                                light_level=p.spec.get("light_level"), pid=pid, **kw)
+        self._adv_session = sess
+        outcome = run_training(self, sess, self.job_name(pid))
+        self._adv_session = None
+        if outcome == "ok":
+            self.reload_job(pid)
+            self.statusBar().showMessage("%s: advanced model trained and in use" %
+                                         self.job_name(pid), 10000)
+        else:
+            self._adv_postponed.add(pid)
+            self.statusBar().showMessage(
+                "%s: advanced training %s - the job runs with its classic checks" % (
+                    self.job_name(pid), "cancelled" if outcome == "cancelled" else "stopped"),
+                10000)
+        return outcome
+
+    def remove_advanced(self, pid, confirm=True):
+        """The job's advanced model and the good pictures it added, gone."""
+        from vision_station.core import advanced
+        p = self.station.projects.get(pid)
+        if p is None:
+            return False
+        if confirm and QMessageBox.question(
+                self, "Remove advanced model",
+                "Remove %s's advanced AI model and the good pictures it added to its checks?"
+                % self.job_name(pid)) != QMessageBox.Yes:
+            return False
+        if pid in self.dirty:
+            self.save_job(pid)
+            p = self.station.projects[pid]
+        advanced.remove(p.folder)
+        p.spec.pop("advanced", None)
+        self.save_job(pid)
+        return True
+
+    def choose_reference_source(self, title):
+        """Where the first picture of a GOOD part comes from: 'file' (browse
+        for one), 'camera' (the AI reference image) or None (cancelled)."""
+        dlg = ReferenceSourceDialog(self, title, advanced=self.advanced_training_on())
+        dlg.exec()
+        return dlg.choice
+
+    def ai_reference(self, title, grab=None, camera=0):
+        """A picture of a good part from the camera, at the best light: the
+        light is tried at several levels and each picture judged by
+        measurement and the AI (core/light_tuning.py), then the picture is
+        taken at the level chosen. With the light not controlled by Vision
+        Station, the picture as the camera sees it. grab: a function giving
+        a fresh camera picture (default: camera `camera`).
+        {"image", "level" (None: light not controlled), "result", "message"},
+        or None when stopped or failed -- having said why."""
+        import threading
+        from PySide6.QtWidgets import QProgressDialog
+        from vision_station.core import light_tuning
+        lt = self.station.light
+        handle = None
+        if grab is None:
+            handle = open_camera(camera)
+            t0 = time.time()
+            while getattr(handle, "backend", None) is None and handle.is_alive() \
+                    and time.time() - t0 < 12:
+                QApplication.processEvents()
+                time.sleep(0.05)
+            if getattr(handle, "backend", None) is None:
+                why = getattr(handle, "last_error", "") or "the camera did not start"
+                handle.stop()
+                QMessageBox.warning(self, title, "No picture from the camera: %s\n\nCheck "
+                                    "Settings > Camera." % why)
+                return None
+
+            def grab():
+                img = handle.frame_after(None, settle=3, timeout_s=6.0)
+                if img is None:
+                    raise RuntimeError(getattr(handle, "last_error", "") or
+                                       "the camera gave no picture")
+                return img
+        # Colour pictures, the camera's white balanced once with the light on.
+        # Balanced in the dark -- or with its colour gains at 1, where the
+        # sensor shows a white light as strongly green -- every picture came
+        # out green or pink; balanced under the lit light: blue 171, green
+        # 175, red 176 on a grey part, a true colour picture.
+        job = {"stop": False, "done": False, "result": None, "image": None,
+               "error": None, "progress": None, "balance": None}
+        tuned = lt.enabled and lt.ctl is not None or (lt.enabled and lt._connect())
+        if tuned and self.hold_exposure(camera):
+            t0 = time.time()                        # the camera takes the change
+            while time.time() - t0 < 0.8:
+                QApplication.processEvents()
+                time.sleep(0.05)
+        bal_handle = None
+        if handle is not None:
+            cam_call = handle.call
+        else:                                      # the job's camera: one more handle
+            bal_handle = open_camera(camera)
+            cam_call = getattr(bal_handle, "call", None)
+
+        def balance_first():
+            """White balanced once under the lit light, then held."""
+            if cam_call is None:
+                return
+            lt.hold("teach")
+            try:
+                # a moderate level: a burnt-out picture cannot be balanced
+                lt.send_level(BALANCE_LEVEL)
+                lt.settle()
+                grab()                                 # frames from before the change
+                if not cam_call(lambda pc: pc.white_balance_once() if pc else False):
+                    return                             # no such camera: as it is
+                t0 = time.time()                       # Once ends by itself
+                while time.time() - t0 < 6:
+                    v = cam_call(lambda pc: str(pc.cam.BalanceWhiteAuto.GetValue())
+                                 if pc else "Off")
+                    if v != "Once":
+                        break
+                    time.sleep(0.2)
+                job["balance"] = "once"
+            finally:
+                lt.release("teach")
+
+        def work():
+            try:
+                if tuned:
+                    balance_first()
+                if tuned:
+                    job["result"] = lt.tune(
+                        grab, stop=lambda: job["stop"],
+                        progress=lambda i, n, row: job.__setitem__("progress", (i, n, row)))
+                if not job["stop"]:
+                    lt.hold("teach")              # the picture, at the level chosen
+                    try:
+                        lt.settle()
+                        job["image"] = grab()
+                    finally:
+                        lt.release("teach")
+            except Exception as e:
+                job["error"] = str(e)
+            finally:
+                job["done"] = True
+
+        n = len(light_tuning.LEVELS) if tuned else 1
+        dlg = QProgressDialog(("Trying the light at %d levels; the AI looks at each picture..."
+                               % n) if tuned else "Taking the picture...", "Stop", 0, n + 1, self)
+        dlg.setWindowTitle(title)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        # Stop counts only while it runs: closing the dialog at the end
+        # emits canceled too, and the finished picture was thrown away
+        dlg.canceled.connect(lambda: job["done"] or job.__setitem__("stop", True))
+        threading.Thread(target=work, name="ai-reference", daemon=True).start()
+        try:
+            while not job["done"]:
+                if job["progress"]:
+                    i, _n, row = job["progress"]
+                    dlg.setValue(i)
+                    ai = ""
+                    if row.get("parts") is not None:
+                        ai = ", the AI finds %d components" % row.get("parts_found", 0)
+                    if row.get("text") is not None:
+                        ai += " and reads %d characters" % int(row["text"])
+                    dlg.setLabelText("Light level %d: %.0f %% grey%s." % (
+                        row["level"], 100 * row["mean"], ai))
+                QApplication.processEvents()
+                time.sleep(0.03)
+        finally:
+            dlg.setValue(n + 1)
+            dlg.close()
+            if handle is not None:
+                handle.stop()
+            if bal_handle is not None:
+                bal_handle.stop()
+        if job["error"]:
+            QMessageBox.warning(self, title, "The picture was not taken: %s" % job["error"])
+            return None
+        if job["stop"] or job["image"] is None:
+            self.statusBar().showMessage("Stopped - no picture taken", 8000)
+            return None
+        result = job["result"]
+        if result is not None:
+            msg = light_tuning.describe(result) + " Every run of this job uses it."
+            level = int(result["level"])
+        else:
+            msg = ("Picture taken as the camera sees it - Vision Station does not control "
+                   "the light. Settings > Light lets the AI choose the light.")
+            level = None
+        if job["balance"]:
+            self._keep_balance(camera)
+        return {"image": job["image"], "level": level, "result": result, "message": msg,
+                "mono": None}
+
+    def _keep_balance(self, camera):
+        """The white balance the AI reference image set, held: automatic
+        balance off in the camera's settings, so it does not drift in the
+        dark between runs."""
+        from vision_station.ui.settings_dialog import (load_camera_settings,
+                                                       save_camera_settings)
+        from vision_station.hardware.camera import CameraSettings
+        qs = self._settings()
+        s = (load_camera_settings(qs, camera) or CameraSettings()).copy()
+        s.auto_white_balance = False
+        s.neutral_balance = False
+        save_camera_settings(qs, camera, s)
+        apply_camera_settings(camera, s)
+
+    def _first_picture(self, title, image_path=None, source=None):
+        """The first picture of a good part for a new application or job:
+        (image, extra recipe keys) or (None, None)."""
+        if image_path:
+            source = "file"
+        if source is None:
+            source = self.choose_reference_source(title)
+        if source is None:
+            return None, None
+        if source == "camera":
+            got = self.ai_reference(title)
+            if got is None:
+                return None, None
+            extra = {"image_source": {"mode": "camera", "paths": [], "folder": "",
+                                      "camera": 0}}
+            if got.get("mono"):
+                extra["image_source"]["mono"] = got["mono"]
+            if got["level"] is not None:
+                extra["light_level"] = got["level"]
+            self.statusBar().showMessage(got["message"], 15000)
+            return got["image"], extra
+        image_path = image_path or self._ask_image(
+            "Picture of a GOOD part - every part is compared with it")
+        img = self._read_reference(image_path, title)
+        return (img, {}) if img is not None else (None, None)
+
+    def new_application(self, name=None, image_path=None, source=None):
+        """A new application: a job folder with a first job made from a
+        picture of a good part -- a file, or the AI reference image from the
+        camera (source 'file' | 'camera'; asked when None)."""
         from vision_station.core import job as jobmod
         if name is None:
             name, ok = QInputDialog.getText(self, "New application", "Name:")
             if not ok or not name.strip():
                 return None
-        image_path = image_path or self._ask_image("Reference image for the first job")
-        img = self._read_reference(image_path, "New application")
+        img, extra = self._first_picture("New application", image_path, source)
         if img is None:
             return None
         base = "".join(c if c.isalnum() else "_" for c in name.lower()).strip("_") or "app"
@@ -4053,11 +6003,15 @@ class QuickBuild(QMainWindow):
             app_id, n = "%s_%d" % (base, n), n + 1
         j = jobmod.create_job(os.path.join(self.root, app_id), name.strip())
         j.add_side("job_1", "Job 1", img, self._starter_tools(img))
+        extra = self._advanced_request(extra)
+        if extra:
+            write_recipe_keys(os.path.join(self.root, app_id, "sides", "job_1",
+                                           "project.json"), extra)
         self.station.store.cache.clear()
         self.open_application(app_id)
         return app_id
 
-    def add_job(self, name=None, image_path=None):
+    def add_job(self, name=None, image_path=None, source=None):
         from vision_station.core import job as jobmod
         if not self.station.is_job_app():
             QMessageBox.information(self, "Add job", "This application is a single model. "
@@ -4069,13 +6023,16 @@ class QuickBuild(QMainWindow):
             name, ok = QInputDialog.getText(self, "Add job", "Job name:")
             if not ok or not name.strip():
                 return None
-        image_path = image_path or self._ask_image("Reference image for %s" % name)
-        img = self._read_reference(image_path, "Add job")
+        img, extra = self._first_picture("Add job", image_path, source)
         if img is None:
             return None
         j = jobmod.Job(self.station.app_folder())
         sid = j.unique_side_id(name)
         j.add_side(sid, name.strip(), img, self._starter_tools(img))
+        extra = self._advanced_request(extra)
+        if extra:
+            write_recipe_keys(os.path.join(self.station.app_folder(), "sides", sid,
+                                           "project.json"), extra)
         self.dirty.clear()
         self.open_application(self.station.app_id)
         return "%s/%s" % (self.station.app_id, sid)
@@ -4165,6 +6122,7 @@ class QuickBuild(QMainWindow):
             return None
         self.line = LineServer(self.station, c.get("port", 3000), c.get("broadcast", False))
         self.line.clientsChanged.connect(self._line_status)
+        self.line.codeScanned.connect(lambda c: self.barcodeBar.accepted(c, running=False))
         if not self.line.start():
             self.sComms.setText("TCP %s: %s" % (c.get("port"), self.line.error))
             theme.set_tone(self.sComms, "fail")
@@ -4369,6 +6327,11 @@ class QuickBuild(QMainWindow):
                                  index=0 if index is None else index, parent=self)
             w.setAttribute(Qt.WA_DeleteOnClose, True)
             self._live_camera = w
+            # aiming and focusing need the part lit: the light is on while
+            # Live Camera is open
+            light = self.station.light
+            light.hold("live")
+            w.destroyed.connect(lambda *_: light.release("live"))
         elif index is not None and w.index.value() != index:
             w.index.setValue(index)
         w.show()
@@ -4417,9 +6380,11 @@ class QuickBuild(QMainWindow):
         self.toolboxDock.show()
         self.toolboxDock.raise_()
 
-    def _toolbox_add(self, ty):
+    def _toolbox_add(self, ty, draw=False):
         """Add to the active job -- the job editor or tool edit control in
-        front -- or, with none open, the only job there is."""
+        front -- or, with none open, the only job there is. draw: its area is
+        drawn on the picture first (the Toolbox used by hand); otherwise it
+        is added at once with a default area."""
         if self._locked_out():
             return None
         pid = self._active_job()
@@ -4430,7 +6395,7 @@ class QuickBuild(QMainWindow):
                                          5000)
             return None
         ed = self.open_job_editor(pid)
-        return ed.add_tool(ty)
+        return ed.begin_add(ty) if draw else ed.add_tool(ty)
 
     def active_window(self):
         sub = self.mdi.activeSubWindow()
@@ -4441,8 +6406,12 @@ class QuickBuild(QMainWindow):
         return getattr(w, "pid", None) if isinstance(w, (JobEditor, ToolEditControl)) else None
 
     def key_run_once(self):
-        """F5: the active job when an editor is active, the application otherwise."""
+        """F5 / Run: the active job when an editor is active, the application
+        otherwise -- inspected (Normal run), or its AI model taught (Model
+        teaching run)."""
         pid = self._active_job()
+        if self.run_mode == "teach":
+            return self.teaching_run([pid] if pid else None)
         self.run_job(pid) if pid else self.run_once()
 
     def key_run_continuous(self):
@@ -4632,6 +6601,25 @@ class QuickBuild(QMainWindow):
         self.station.set_parallel(on)
         self._settings().setValue("parallel_jobs", bool(on))     # this PC's choice
 
+    def find_picture(self):
+        """The Find picture window: saved result pictures, searched as the
+        barcode is typed or scanned. One window; opening it again brings it
+        to the front with the search box ready."""
+        from vision_station.ui.finder_dialog import FinderDialog
+        dlg = getattr(self, "_finder", None)
+        if dlg is None:
+            dlg = FinderDialog(self, self.station.pictures, self.station.picture_folders)
+            dlg.setAttribute(Qt.WA_DeleteOnClose)
+            dlg.destroyed.connect(lambda *_: setattr(self, "_finder", None))
+            self._finder = dlg
+        else:
+            dlg.refresh()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        dlg._focus_query()
+        return dlg
+
     def show_history(self):
         h = getattr(self, "_history", None)
         if h is None:
@@ -4651,7 +6639,8 @@ class QuickBuild(QMainWindow):
                         "Results queue: all runs", "Results queue: failures only",
                         "Run View", "Cascade", "Tile", "Next window", "Run Once",
                         "Run Continuously", "F5", "F6", "Ctrl+1", "Ctrl+3",
-                        "Getting started", "Keyboard shortcuts", "Check installation..."}
+                        "Getting started", "Keyboard shortcuts", "Check installation...",
+                        "Find picture", "Find Picture...   (Ctrl+F)"}
 
     def _build_actions(self):
         """Every action that changes the application -- disabled for operators.
@@ -4770,7 +6759,7 @@ class QuickBuild(QMainWindow):
 
     def _restore_layout(self):
         s = self._settings()
-        geo, state = s.value("geometry"), s.value("state")
+        geo, state = s.value(self.LAYOUT_KEYS[0]), s.value(self.LAYOUT_KEYS[1])
         if geo is not None:
             self.restoreGeometry(geo)
         if state is None or not self.restoreState(state, LAYOUT_VERSION):
@@ -4796,8 +6785,8 @@ class QuickBuild(QMainWindow):
         if getattr(self, "_queue_stood_aside", False):
             self.queueDock.show()          # saved as the person left it, not as an editor hid it
         s = self._settings()
-        s.setValue("geometry", self.saveGeometry())
-        s.setValue("state", self.saveState(LAYOUT_VERSION))
+        s.setValue(self.LAYOUT_KEYS[0], self.saveGeometry())
+        s.setValue(self.LAYOUT_KEYS[1], self.saveState(LAYOUT_VERSION))
         for ed in list(self._tool_editors.values()) + list(self._job_editors.values()):
             ed.close()
         if self.line is not None:
@@ -4860,6 +6849,7 @@ def _crash_log():
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv
+    paths.first_run()
     _crash_log()
     if sys.platform == "win32":
         try:                                 # the taskbar shows this app's icon, not Python's
@@ -4873,8 +6863,37 @@ def main(argv=None):
     apply_theme(app)
     root = argv[1] if len(argv) > 1 else None
     w = QuickBuild(root)
+    _hand_back_on_console_close(w.station.light)
     w.show()
     return app.exec()
+
+
+def _hand_back_on_console_close(light):
+    """The terminal the application was started from closed (its X, Ctrl+C,
+    Ctrl+Break, log-off, shutdown): the light is handed back first -- Windows
+    gives a console program a few seconds for this. Closing the terminal
+    used to end the program at once and leave the light as it had set it.
+    VS Code's Stop button ends it with no warning at all; the controller's
+    own setting is kept in the settings for that (hardware/light.py
+    _take_home). Windows only; a no-op elsewhere."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+    def handler(_event):
+        try:
+            light.shutdown()
+        except Exception:
+            pass
+        return False                         # and then end as Windows would
+    try:
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, True)
+    except Exception:
+        return None
+    _hand_back_on_console_close.keep = handler     # must outlive this call
+    return handler
 
 
 if __name__ == "__main__":

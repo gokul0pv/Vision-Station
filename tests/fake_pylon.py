@@ -249,6 +249,15 @@ class _Device:
                 "TriggerDelayAbs": _Node(0.0, 0.0, 1000000.0),
                 "GevSCPSPacketSize": _Node(1500, 220, 16404, inc=4),
                 "GevSCPD": _Node(0, 0, 65535),
+                # IP settings as the acA5472-5gc had them: the stored mask did
+                # not match the network, so after a power cycle it was lost
+                "GevCurrentIPAddress": _Node(0xC0A80306, kind="int", writable=False),
+                "GevCurrentSubnetMask": _Node(0xFFFFFF00, kind="int", writable=False),
+                "GevCurrentDefaultGateway": _Node(0, kind="int", writable=False),
+                "GevPersistentIPAddress": _Node(0xC0A80306, 0, 0xFFFFFFFF, kind="int"),
+                "GevPersistentSubnetMask": _Node(0xFFFF0000, 0, 0xFFFFFFFF, kind="int"),
+                "GevPersistentDefaultGateway": _Node(0, 0, 0xFFFFFFFF, kind="int"),
+                "GevCurrentIPConfiguration": _Node(0x4, 0, 0x7, kind="int"),
             }
             self.info = _DeviceInfo(model or "acA1300-30gm", "GIGE0001", ip=ip or "",
                                     device_class="BaslerGigE")

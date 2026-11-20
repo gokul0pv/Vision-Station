@@ -1,73 +1,158 @@
-"""Find parts: the panel beside a job editor that runs the part finder on the
-job's reference picture, shows what it found as boxes on the picture, and
-turns what the user keeps into "Part present" checks.
+"""Find parts and text: the panel beside a job editor that finds what is in an
+area of the reference picture, shows it as boxes on the picture, and turns
+what the user keeps into checks -- each one a separate check.
 
-    1. Area       the whole picture, or a box dragged round part of it
-    2. Find       the network runs on the graphics card (a few seconds for a
-                  whole 20-megapixel board); a progress bar shows the passes
-    3. Review     a box per part, coloured by type. Click a box to drop it or
-                  bring it back; untick a type to drop all of its kind;
-                  Sensitivity re-filters at once without running again;
-                  name a type ("inductor") and its checks are called that.
-                  "Find all like this" takes one box drawn round a part and
-                  finds every copy of it -- for the rows of identical parts
-                  the network can miss.
-    4. Add        one check per kept part, in one step (Ctrl+Z takes them
-                  all back), each an ordinary box to move, resize or delete.
+    Find          Parts             -> a "Part present" check per kept part
+                  Text  (verify)    -> a "Verify text" (OCV) check per kept
+                                       line of text, expecting exactly that text
+                  Text  (read)      -> a "Read text" (OCR) check per kept line
+
+    1. Area       the whole picture, or a box dragged round part of it; the
+                  area's box can be moved and resized on the picture
+    2. Find       parts: a neural network on the graphics card; text: the
+                  application's own text reader (also on the graphics card)
+    3. Review     every box can be moved and resized on the picture; a click
+                  keeps or drops it. Parts are coloured by type (untick a type
+                  to drop all of its kind, name it "inductor" and its checks
+                  are called that; Sensitivity re-filters at once; "Find all
+                  like this" finds every copy of one part). Text: each line is
+                  a row -- keep it or not, correct the text it must read, name
+                  the check; resizing a text box reads it again.
+    4. Add        one check per kept box, in one step (Ctrl+Z takes them all
+                  back). The panel stays open, to find parts and then text,
+                  or another area, without starting over.
 """
 import threading
 import time
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QPen
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QGraphicsRectItem,
-                               QGraphicsSimpleTextItem, QHBoxLayout, QHeaderView, QLabel,
-                               QProgressBar, QPushButton, QSlider, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout)
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QFont, QPen
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QGraphicsItem,
+                               QGraphicsRectItem, QGraphicsSimpleTextItem, QHBoxLayout,
+                               QHeaderView, QLabel, QProgressBar, QPushButton, QSlider,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from vision_station.core import part_finder as pf
 
 PALETTE = ["#00B3FF", "#FF9F1C", "#2EC4B6", "#E71D73", "#9B5DE5", "#F15BB5", "#00F5D4",
            "#FEE440", "#8AC926", "#FF595E", "#6A4C93", "#1982C4", "#FFCA3A", "#C77DFF",
            "#06D6A0", "#EF476F", "#118AB2", "#FFD166", "#73D2DE", "#D81159"]
+TEXT_COLOUR = "#1F6FFF"
+DROPPED = QColor(150, 150, 150)
+
+MODES = [("parts", "Parts  →  Part present checks"),
+         ("ocv", "Text  →  Verify text checks (OCV)"),
+         ("ocr", "Text  →  Read text checks (OCR)")]
 
 
 def type_colour(t):
     return QColor(PALETTE[t % len(PALETTE)])
 
 
-class PreviewBox(QGraphicsRectItem):
-    """One found part on the picture. A click drops it or brings it back."""
+class EditableBox(QGraphicsRectItem):
+    """A box on the picture that can be moved (drag inside), resized (drag an
+    edge or a corner) and clicked. on_click() for a click without a drag,
+    on_change(rect) once a move or resize is finished."""
 
-    def __init__(self, panel, index, part):
-        x, y, w, h = part["box"]
-        super().__init__(QRectF(x, y, w, h))
-        self.panel, self.index = panel, index
-        self.setZValue(45)
+    EDGE = 7.0           # screen pixels round the edge that resize
+
+    def __init__(self, rect, on_click=None, on_change=None, z=45):
+        super().__init__(QRectF(*rect))
+        self.on_click, self.on_change = on_click, on_change
+        self.setZValue(z)
+        self.setAcceptHoverEvents(True)
         self.setAcceptedMouseButtons(Qt.LeftButton)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("%s  -  confidence %.2f\nclick to drop it or bring it back"
-                        % (panel.type_label(part["type"]), part["score"]))
-        self.restyle()
+        self._drag = None
+        self._label = None
 
-    def restyle(self):
-        part = self.panel.parts[self.index]
-        kept = self.panel.is_kept(self.index)
-        c = type_colour(part["type"]) if kept else QColor(150, 150, 150)
-        pen = QPen(c)
-        pen.setCosmetic(True)
-        pen.setWidthF(2.0 if kept else 1.2)
-        if not kept:
-            pen.setStyle(Qt.DashLine)
-        self.setPen(pen)
-        fill = QColor(c)
-        fill.setAlpha(38 if kept else 0)
-        self.setBrush(QBrush(fill))
+    def _k(self):
+        views = self.scene().views() if self.scene() is not None else []
+        return max(1e-6, views[0].transform().m11()) if views else 1.0
+
+    def _zone(self, p):
+        r, e = self.rect(), self.EDGE / self._k()
+        z = ""
+        if abs(p.y() - r.top()) <= e:
+            z += "t"
+        elif abs(p.y() - r.bottom()) <= e:
+            z += "b"
+        if abs(p.x() - r.left()) <= e:
+            z += "l"
+        elif abs(p.x() - r.right()) <= e:
+            z += "r"
+        return z or "move"
+
+    _CURSORS = {"t": Qt.SizeVerCursor, "b": Qt.SizeVerCursor, "l": Qt.SizeHorCursor,
+                "r": Qt.SizeHorCursor, "tl": Qt.SizeFDiagCursor, "br": Qt.SizeFDiagCursor,
+                "tr": Qt.SizeBDiagCursor, "bl": Qt.SizeBDiagCursor, "move": Qt.SizeAllCursor}
+
+    def hoverMoveEvent(self, e):
+        self.setCursor(self._CURSORS[self._zone(e.pos())])
 
     def mousePressEvent(self, e):
-        self.panel.toggle_part(self.index)
+        self._drag = (e.scenePos(), QRectF(self.rect()), self._zone(e.pos()), False)
         e.accept()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            return
+        start, r0, zone, moved = self._drag
+        d = e.scenePos() - start
+        if not moved and (abs(d.x()) + abs(d.y())) * self._k() < 3:
+            return                                    # still a click
+        r = QRectF(r0)
+        if zone == "move":
+            r.translate(d)
+        else:
+            if "l" in zone:
+                r.setLeft(min(r0.left() + d.x(), r0.right() - 4))
+            if "r" in zone:
+                r.setRight(max(r0.right() + d.x(), r0.left() + 4))
+            if "t" in zone:
+                r.setTop(min(r0.top() + d.y(), r0.bottom() - 4))
+            if "b" in zone:
+                r.setBottom(max(r0.bottom() + d.y(), r0.top() + 4))
+        self.prepareGeometryChange()
+        self.setRect(r)
+        self._place_label()
+        self._drag = (start, r0, zone, True)
+
+    def mouseReleaseEvent(self, e):
+        drag, self._drag = self._drag, None
+        if drag is None:
+            return
+        if not drag[3]:
+            if self.on_click:
+                self.on_click()
+        elif self.on_change:
+            r = self.rect()
+            self.on_change([int(round(r.x())), int(round(r.y())),
+                            max(1, int(round(r.width()))), max(1, int(round(r.height())))])
+
+    # a small caption above the box (the text read), the same size at any zoom
+    def set_label(self, text, colour):
+        if not text:
+            if self._label is not None:
+                self._label.setVisible(False)
+            return
+        if self._label is None:
+            self._label = QGraphicsSimpleTextItem(self)
+            f = QFont()
+            f.setPointSizeF(8.5)
+            f.setWeight(QFont.DemiBold)
+            self._label.setFont(f)
+            self._label.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+            self._label.setAcceptedMouseButtons(Qt.NoButton)
+        self._label.setVisible(True)
+        self._label.setText(text)
+        self._label.setBrush(QBrush(colour))
+        self._place_label()
+
+    def _place_label(self):
+        if self._label is not None:
+            r = self.rect()
+            self._label.setPos(QPointF(r.left(), r.top() - 18 / self._k()))
 
 
 class PartFinderPanel(QDialog):
@@ -76,30 +161,37 @@ class PartFinderPanel(QDialog):
     def __init__(self, editor):
         super().__init__(editor, Qt.Tool)
         self.ed = editor
-        self.setWindowTitle("Find parts")
+        self.setWindowTitle("Find parts and text")
         self.setObjectName("partFinder")
-        self.resize(430, 640)
+        self.resize(460, 680)
         self.image = editor.project().reference
         self.canvas = editor.display.canvas
+        self.mode = "parts"
         self.area = None                    # [x, y, w, h] or None = whole picture
-        self.raw = None                     # network candidates for the area
-        self.parts = []                     # [{"box", "score", "type"}]
-        self.dropped = set()                # part indices the user dropped
+        self.raw = None                     # network candidates for the area (parts)
+        self.parts = []                     # [{"box", "score", "type", "text"?}]
+        self.dropped = set()                # indices the user dropped
         self.off_types = set()
-        self.names = {}                     # type -> name typed by the user
+        self.names = {}                     # parts: type -> name; text: index -> name
         self.items = []
         self._area_item = None
         self._job = None
 
-        intro = QLabel("Finds every component in an area with a neural network on the "
-                       "graphics card. Review what it found, then add a \"Part present\" "
-                       "check for each part you keep.")
+        intro = QLabel("Find what is in an area of the picture, adjust the boxes, and add "
+                       "a separate check for each one you keep.")
         intro.setWordWrap(True)
         intro.setObjectName("hint")
 
+        self.modeBox = QComboBox()
+        for key, text in MODES:
+            self.modeBox.addItem(text, key)
+        self.modeBox.setToolTip("What to find in the area, and which check each kept box "
+                                "becomes")
+
         self.areaLabel = QLabel("Area: the whole picture")
         self.drawArea = QPushButton("Draw area...")
-        self.drawArea.setToolTip("Drag a box round the part of the picture to search")
+        self.drawArea.setToolTip("Drag a box round the part of the picture to search - it "
+                                 "can then be moved and resized on the picture")
         self.wholeBtn = QPushButton("Whole picture")
         self.findBtn = QPushButton("Find parts")
         self.findBtn.setObjectName("primaryButton")
@@ -117,8 +209,7 @@ class PartFinderPanel(QDialog):
         self.sens.setToolTip("Higher finds fainter parts - and more things that are not parts")
         self.sensValue = QLabel("50")
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Type", "Found", "Name the checks"])
+        self.table = QTableWidget(0, 4)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -126,8 +217,29 @@ class PartFinderPanel(QDialog):
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        # one accept threshold per kind of part, for all its checks at once
+        self.thresholds = {}
+        # text checks: how sure the reader must be, for all of them
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.textConf = QDoubleSpinBox()
+        self.textConf.setRange(0.05, 0.99)
+        self.textConf.setSingleStep(0.05)
+        self.textConf.setDecimals(2)
+        self.textConf.setValue(0.5)
+        self.textConf.setToolTip("Lines read with less confidence than this are not trusted - "
+                                 "for every text check added")
         self.table.itemChanged.connect(self._table_changed)
-        self.table.itemSelectionChanged.connect(self._highlight_type)
+        self.table.itemSelectionChanged.connect(self._highlight)
+        # A click anywhere on a row keeps or drops it -- the tick box alone
+        # was too small to hit. Double-click edits a text or a name.
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked |
+                                   QAbstractItemView.EditKeyPressed)
+        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.setIconSize(QSize(20, 20))
+        self.table.cellClicked.connect(self._row_clicked)
+        self.table.cellDoubleClicked.connect(self._row_double_clicked)
+        self._row_toggles = []                   # (time, row) of clicks that toggled
 
         self.likeBtn = QPushButton("Find all like this...")
         self.likeBtn.setToolTip("Drag a box round one part: every copy of it in the area is "
@@ -150,6 +262,10 @@ class PartFinderPanel(QDialog):
         lay.setSpacing(8)
         lay.addWidget(intro)
         r = QHBoxLayout()
+        r.addWidget(QLabel("Find"))
+        r.addWidget(self.modeBox, 1)
+        lay.addLayout(r)
+        r = QHBoxLayout()
         r.addWidget(self.areaLabel, 1)
         r.addWidget(self.drawArea)
         r.addWidget(self.wholeBtn)
@@ -157,18 +273,29 @@ class PartFinderPanel(QDialog):
         lay.addWidget(self.findBtn)
         lay.addWidget(self.progress)
         lay.addWidget(self.status)
-        r = QHBoxLayout()
+        self.sensRow = QWidget()
+        r = QHBoxLayout(self.sensRow)
+        r.setContentsMargins(0, 0, 0, 0)
         r.addWidget(QLabel("Sensitivity"))
         r.addWidget(self.sens, 1)
         r.addWidget(self.sensValue)
-        lay.addLayout(r)
+        lay.addWidget(self.sensRow)
         lay.addWidget(self.table, 1)
-        r = QHBoxLayout()
+        self.confRow = QWidget()
+        r = QHBoxLayout(self.confRow)
+        r.setContentsMargins(0, 0, 0, 0)
+        r.addWidget(QLabel("Reading confidence for these checks"))
+        r.addStretch(1)
+        r.addWidget(self.textConf)
+        lay.addWidget(self.confRow)
+        self.likeRow = QWidget()
+        r = QHBoxLayout(self.likeRow)
+        r.setContentsMargins(0, 0, 0, 0)
         r.addWidget(self.likeBtn)
         r.addWidget(QLabel("alike"))
         r.addWidget(self.match, 1)
         r.addWidget(self.matchValue)
-        lay.addLayout(r)
+        lay.addWidget(self.likeRow)
         r = QHBoxLayout()
         r.addWidget(self.allBtn)
         r.addWidget(self.noneBtn)
@@ -177,6 +304,7 @@ class PartFinderPanel(QDialog):
         r.addWidget(self.addBtn)
         lay.addLayout(r)
 
+        self.modeBox.currentIndexChanged.connect(lambda _i: self.set_mode(self.modeBox.currentData()))
         self.drawArea.clicked.connect(lambda: self._draw(self.set_area,
                                                          "Drag a box round the area to search"))
         self.wholeBtn.clicked.connect(lambda: self.set_area(None))
@@ -194,15 +322,56 @@ class PartFinderPanel(QDialog):
         self._refilter = QTimer(self)
         self._refilter.setSingleShot(True)
         self._refilter.timeout.connect(self._apply_filter)
+        self.set_mode("parts")
 
         if self.image is None:
             self.findBtn.setEnabled(False)
             self.status.setText("This inspection has no reference picture yet. Set one first "
-                                "(Image Source), then find its parts.")
-        elif not pf.available():
+                                "(Good reference), then find its parts.")
+
+    # ---- mode ------------------------------------------------------------
+    @property
+    def text_mode(self):
+        return self.mode in ("ocv", "ocr")
+
+    def set_mode(self, mode):
+        """Parts, or text read into Verify text / Read text checks. What was
+        found in the other mode is cleared -- it was for other checks."""
+        mode = mode if mode in dict(MODES) else "parts"
+        changed = mode != self.mode
+        was_text = self.text_mode
+        self.mode = mode
+        i = self.modeBox.findData(mode)
+        if self.modeBox.currentIndex() != i:
+            self.modeBox.blockSignals(True)
+            self.modeBox.setCurrentIndex(i)
+            self.modeBox.blockSignals(False)
+        self.findBtn.setText("Find text" if self.text_mode else "Find parts")
+        self.sensRow.setVisible(not self.text_mode)
+        self.likeRow.setVisible(not self.text_mode)
+        self.confRow.setVisible(self.text_mode)
+        if self.text_mode:
+            self.table.setHorizontalHeaderLabels(
+                ["Keep", "Text it must read" if mode == "ocv" else "Must contain (clear: any)",
+                 "Name the check", ""])
+        else:
+            self.table.setHorizontalHeaderLabels(["Type", "Found", "Name the checks",
+                                                  "Threshold"])
+        self.table.setColumnHidden(3, self.text_mode)
+        if changed and (was_text != self.text_mode):
+            self.parts, self.raw, self.names = [], None, {}
+            self.dropped, self.off_types = set(), set()
+            self._fill()
+        elif changed:
+            self._fill()                       # OCV <-> OCR: same boxes, other column title
+        if self.image is not None and not self.text_mode and not pf.available():
             self.findBtn.setEnabled(False)
             self.status.setText("The part-finding model is missing (models/parts/%s)."
                                 % pf.os.path.basename(pf.MODEL))
+        elif self.image is not None:
+            self.findBtn.setEnabled(True)
+            self.status.setText("Press %s.%s" % (self.findBtn.text(), "" if self.text_mode else
+                                                 "  Model: %s." % pf.model_name()))
 
     # ---- area ------------------------------------------------------------
     def _draw(self, then, message):
@@ -211,27 +380,32 @@ class PartFinderPanel(QDialog):
         self.status.setText(message + " on the picture.")
 
     def set_area(self, roi):
-        self.area = list(roi) if roi else None
+        self.area = [int(v) for v in roi] if roi else None
         if self._area_item is not None:
-            self.canvas.sc.removeItem(self._area_item)
+            if self._area_item.scene() is not None:
+                self.canvas.sc.removeItem(self._area_item)
             self._area_item = None
         if self.area:
-            x, y, w, h = self.area
-            it = QGraphicsRectItem(QRectF(x, y, w, h))
+            it = EditableBox(self.area, on_change=self._area_moved, z=44)
             pen = QPen(QColor("#FFFFFF"))
             pen.setCosmetic(True)
             pen.setWidthF(1.5)
             pen.setStyle(Qt.DashLine)
             it.setPen(pen)
-            it.setZValue(44)
-            it.setAcceptedMouseButtons(Qt.NoButton)
+            it.setToolTip("The area searched - drag to move it, drag an edge to resize it")
             self.canvas.sc.addItem(it)
             self._area_item = it
-            self.areaLabel.setText("Area: %d x %d px" % (w, h))
+            self.areaLabel.setText("Area: %d x %d px" % (self.area[2], self.area[3]))
         else:
             self.areaLabel.setText("Area: the whole picture")
         self.raw = None
-        self.status.setText("Press Find parts.")
+        self.status.setText("Press %s." % self.findBtn.text())
+
+    def _area_moved(self, roi):
+        self.area = list(roi)
+        self.raw = None
+        self.areaLabel.setText("Area: %d x %d px" % (roi[2], roi[3]))
+        self.status.setText("Area changed - press %s again." % self.findBtn.text())
 
     # ---- finding -----------------------------------------------------------
     def find(self, wait=False):
@@ -240,16 +414,18 @@ class PartFinderPanel(QDialog):
         self.findBtn.setEnabled(False)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
-        self.status.setText("Finding parts...")
+        text = self.text_mode
+        self.status.setText("Reading text..." if text else "Finding parts...")
         img, area, sens = self.image, self.area, self.sens.value() / 100.0
-        job = {"done": False, "result": None, "error": None, "progress": (0, 0)}
+        job = {"done": False, "result": None, "error": None, "progress": (0, 0), "text": text}
 
         def progress(i, n):
             job["progress"] = (i, n)
 
         def work():
             try:
-                job["result"] = pf.find_parts(img, area, sens, progress=progress)
+                job["result"] = (pf.find_text(img, area, progress=progress) if text else
+                                 pf.find_parts(img, area, sens, progress=progress))
             except Exception as e:
                 job["error"] = e
             job["done"] = True
@@ -280,19 +456,23 @@ class PartFinderPanel(QDialog):
         self.progress.setVisible(False)
         self.findBtn.setEnabled(True)
         if job["error"] is not None:
-            self.status.setText("The part finder failed: %s" % job["error"])
+            self.status.setText("%s failed: %s" % ("Text reading" if job["text"] else
+                                                   "The part finder", job["error"]))
             return
+        if job["text"] != self.text_mode:
+            return                              # the mode changed while it ran
         r = job["result"]
-        self.raw = r["candidates"]
+        self.raw = r.get("candidates")
+        self.thresholds = {}                    # new types: thresholds start afresh
         self._show(r)
 
     def _sens_changed(self, v):
         self.sensValue.setText(str(v))
-        if self.raw is not None:
+        if self.raw is not None and not self.text_mode:
             self._refilter.start(150)
 
     def _apply_filter(self):
-        if self.raw is None or self.image is None:
+        if self.raw is None or self.image is None or self.text_mode:
             return
         r = pf.find_parts(self.image, self.area, self.sens.value() / 100.0, raw=self.raw)
         self._show(r)
@@ -301,13 +481,26 @@ class PartFinderPanel(QDialog):
         self.parts = list(r["parts"])
         self.dropped = set()
         self.off_types = set()
+        if self.text_mode:
+            self.names = {}
+            # silkscreen noise -- a lone character, a doubtful read -- starts
+            # unticked: shown, one click to keep, never added unasked
+            self.dropped = {i for i, p in enumerate(self.parts)
+                            if len(p.get("text", "").strip()) < 2 or p.get("score", 0) < 0.6}
         self._fill()
-        self.status.setText("%d parts of %d types in %.1f s (%s). Click a box to drop it; "
-                            "untick a type to drop all of them."
-                            % (len(self.parts), r["types"], r["ms"] / 1000.0, r["device"]))
+        if self.text_mode:
+            self.status.setText(
+                "%d line%s of text in %.1f s (%s). Click a row (or its box) to keep or drop "
+                "it; double-click the text to correct it; drag a box to move or resize it." % (
+                    len(self.parts), "" if len(self.parts) == 1 else "s", r["ms"] / 1000.0,
+                    r["device"]) if self.parts else "No text found in the area.")
+        else:
+            self.status.setText("%d parts of %d types in %.1f s (%s). Click a box to drop it; "
+                                "drag it to move or resize; click a type's row to drop all of them."
+                                % (len(self.parts), r["types"], r["ms"] / 1000.0, r["device"]))
 
     def find_like(self, roi):
-        if self.image is None or not roi:
+        if self.image is None or not roi or self.text_mode:
             return
         found = pf.find_similar(self.image, roi, self.area, min_score=self.match.value() / 100.0)
         if not found:
@@ -339,30 +532,70 @@ class PartFinderPanel(QDialog):
         return "Type %s%s" % (pf.type_name(t), (" - " + name) if name else "")
 
     def is_kept(self, i):
+        if self.text_mode:
+            return i not in self.dropped
         return i not in self.dropped and self.parts[i]["type"] not in self.off_types
 
     def kept(self):
         return [p for i, p in enumerate(self.parts) if self.is_kept(i)]
 
+    def _colour(self, i):
+        if not self.is_kept(i):
+            return DROPPED
+        return QColor(TEXT_COLOUR) if self.text_mode else type_colour(self.parts[i]["type"])
+
+    def _style(self, i, bold=False):
+        it = self.items[i]
+        kept = self.is_kept(i)
+        c = self._colour(i)
+        pen = QPen(c)
+        pen.setCosmetic(True)
+        pen.setWidthF(3.5 if bold else (2.5 if kept else 1.2))
+        if not kept:
+            pen.setStyle(Qt.DashLine)
+        it.setPen(pen)
+        fill = QColor(c)
+        fill.setAlpha(36 if kept else 0)
+        it.setBrush(QBrush(fill))
+        if self.text_mode:
+            it.set_label(self.parts[i].get("text", ""), c)
+
     def toggle_part(self, i):
-        if self.parts[i]["type"] in self.off_types:
+        if not self.text_mode and self.parts[i]["type"] in self.off_types:
             self.off_types.discard(self.parts[i]["type"])
             self._sync_table_checks()
-            for it in self.items:
-                it.restyle()
+            for k in range(len(self.items)):
+                self._style(k)
         elif i in self.dropped:
             self.dropped.discard(i)
         else:
             self.dropped.add(i)
-        self.items[i].restyle()
+        self._style(i)
+        if self.text_mode:
+            self._sync_table_checks()
         self._update_add()
+
+    def _box_changed(self, i, roi):
+        """A box moved or resized on the picture: the check will use the box
+        as it is now; a text box is read again."""
+        self.parts[i]["box"] = list(roi)
+        if self.text_mode and self.image is not None:
+            text, conf = pf.read_box(self.image, roi)
+            self.parts[i]["text"], self.parts[i]["score"] = text, conf
+            row = self._row_of(i)
+            if row is not None:
+                self.table.blockSignals(True)
+                self.table.item(row, 1).setText(text)
+                self.table.blockSignals(False)
+            self.status.setText("Read again: %s" % (text or "no text in this box"))
+        self._style(i)
 
     def _keep_all(self, on):
         self.dropped = set() if on else set(range(len(self.parts)))
         self.off_types = set()
         self._sync_table_checks()
-        for it in self.items:
-            it.restyle()
+        for k in range(len(self.items)):
+            self._style(k)
         self._update_add()
 
     def _clear_items(self):
@@ -374,90 +607,226 @@ class PartFinderPanel(QDialog):
     def _fill(self):
         self._clear_items()
         for i, p in enumerate(self.parts):
-            it = PreviewBox(self, i, p)
+            it = EditableBox(p["box"], on_click=lambda i=i: self.toggle_part(i),
+                             on_change=lambda roi, i=i: self._box_changed(i, roi))
+            what = ("%s  -  %s" % (p.get("text", ""), "confidence %.2f" % p.get("score", 0))
+                    if self.text_mode else
+                    "%s  -  confidence %.2f" % (self.type_label(p["type"]), p["score"]))
+            it.setToolTip(what + "\nclick to keep or drop it; drag to move; drag an edge "
+                                 "to resize")
             self.canvas.sc.addItem(it)
             self.items.append(it)
-        types = sorted(set(p["type"] for p in self.parts))
-        counts = {t: sum(1 for p in self.parts if p["type"] == t) for t in types}
+        for k in range(len(self.items)):
+            self._style(k)
         self.table.blockSignals(True)
-        self.table.setRowCount(len(types))
-        for row, t in enumerate(types):
-            a = QTableWidgetItem("  %s" % pf.type_name(t))
-            a.setData(Qt.UserRole, t)
-            a.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
-            a.setCheckState(Qt.Unchecked if t in self.off_types else Qt.Checked)
-            a.setForeground(QBrush(type_colour(t)))
-            f = a.font()
-            f.setBold(True)
-            a.setFont(f)
-            b = QTableWidgetItem(str(counts[t]))
-            b.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            c = QTableWidgetItem(self.names.get(t, ""))
-            c.setToolTip("e.g. inductor, sfp_cage, capacitor - the checks are named "
-                         "inductor_01, inductor_02...")
-            self.table.setItem(row, 0, a)
-            self.table.setItem(row, 1, b)
-            self.table.setItem(row, 2, c)
+        if self.text_mode:
+            self.table.setRowCount(len(self.parts))
+            for row, p in enumerate(self.parts):
+                a = QTableWidgetItem(" %d" % (row + 1))
+                a.setData(Qt.UserRole, row)
+                a.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                b = QTableWidgetItem(p.get("text", ""))
+                b.setToolTip("The text this check must read - correct it if it was misread"
+                             if self.mode == "ocv" else
+                             "The check fails unless this is read here - clear it for text "
+                             "that changes from part to part, such as a serial number")
+                c = QTableWidgetItem(self.names.get(row, ""))
+                c.setToolTip("e.g. lot_code, serial - the check is named lot_code_01")
+                for col, x in enumerate((a, b, c)):
+                    self.table.setItem(row, col, x)
+        else:
+            types = sorted(set(p["type"] for p in self.parts))
+            counts = {t: sum(1 for p in self.parts if p["type"] == t) for t in types}
+            self.table.setRowCount(len(types))
+            for row, t in enumerate(types):
+                a = QTableWidgetItem(" %s" % pf.type_name(t))
+                a.setData(Qt.UserRole, t)
+                a.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                a.setForeground(QBrush(type_colour(t)))
+                f = a.font()
+                f.setBold(True)
+                a.setFont(f)
+                b = QTableWidgetItem(str(counts[t]))
+                b.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                c = QTableWidgetItem(self.names.get(t, ""))
+                c.setToolTip("e.g. inductor, sfp_cage, capacitor - the checks are named "
+                             "inductor_01, inductor_02...")
+                for col, x in enumerate((a, b, c)):
+                    self.table.setItem(row, col, x)
+                self.table.setCellWidget(row, 3, self._threshold_box(t))
         self.table.blockSignals(False)
+        self._sync_table_checks()
         self._update_add()
+
+    # ---- whole-row keep / drop -------------------------------------------
+    def _kept_icon(self, kept):
+        from vision_station.ui import icons
+        if not hasattr(self, "_icons"):
+            ok = icons._ph_icon("check-circle-fill", "#1F6FFF") or icons.icon("add")
+            off = icons._ph_icon("circle", "#9AA0A6") or icons.QIcon()
+            self._icons = (ok, off)
+        return self._icons[0 if kept else 1]
+
+    def _row_key_kept(self, row):
+        a = self.table.item(row, 0)
+        if a is None:
+            return None, False
+        key = a.data(Qt.UserRole)
+        off = key in self.dropped if self.text_mode else key in self.off_types
+        return key, not off
+
+    def _row_clicked(self, row, _col):
+        import time as _t
+        self._row_toggles.append((_t.monotonic(), row))
+        self._toggle_row(row)
+
+    def _row_double_clicked(self, row, col):
+        """A double-click is for editing: the clicks that made it are not
+        meant to keep or drop the row."""
+        import time as _t
+        from PySide6.QtWidgets import QApplication
+        now = _t.monotonic()
+        window = QApplication.doubleClickInterval() / 1000.0 + 0.05
+        undo = [r for (t, r) in self._row_toggles if r == row and now - t <= window]
+        for _ in undo:
+            self._toggle_row(row)
+        self._row_toggles = []
+        item = self.table.item(row, col)
+        if item is not None and item.flags() & Qt.ItemIsEditable:
+            self.table.editItem(item)
+
+    def _toggle_row(self, row):
+        key, kept = self._row_key_kept(row)
+        if key is None:
+            return
+        if self.text_mode:
+            (self.dropped.add if kept else self.dropped.discard)(key)
+            self._style(key)
+        else:
+            (self.off_types.add if kept else self.off_types.discard)(key)
+            for k in range(len(self.items)):
+                if self.parts[k]["type"] == key:
+                    self._style(k)
+        self._sync_table_checks()
+        self._update_add()
+
+    def _paint_row(self, row, kept):
+        """A kept row reads normally with a blue tick; a dropped one is
+        greyed and struck through, with an empty circle."""
+        for col in range(self.table.columnCount()):
+            it = self.table.item(row, col)
+            if it is None:
+                continue
+            f = it.font()
+            f.setStrikeOut(not kept and col > 0)
+            it.setFont(f)
+            if col > 0:
+                # the theme's own text colours: a fixed near-black was
+                # invisible on the dark theme
+                from vision_station.ui import theme
+                it.setForeground(QBrush(QColor(theme.color("text" if kept else "text3"))))
+        a = self.table.item(row, 0)
+        if a is not None:
+            a.setIcon(self._kept_icon(kept))
+
+    def _threshold_box(self, t):
+        """The accept threshold every check of this kind of part gets."""
+        from PySide6.QtWidgets import QDoubleSpinBox
+        sb = QDoubleSpinBox()
+        sb.setRange(0.05, 0.99)
+        sb.setSingleStep(0.05)
+        sb.setDecimals(2)
+        sb.setValue(float(self.thresholds.get(t, 0.65)))
+        sb.setToolTip("How closely each %s must match the reference, 0 to 1, for every check "
+                      "of this kind - lower it if good parts are missed, raise it if missing "
+                      "parts get through. Can be changed for the whole group later, in the "
+                      "editor." % pf.type_name(t))
+        sb.valueChanged.connect(lambda v, t=t: self.thresholds.__setitem__(t, float(v)))
+        self.thresholds.setdefault(t, float(sb.value()))
+        return sb
+
+    def _row_of(self, i):
+        for row in range(self.table.rowCount()):
+            a = self.table.item(row, 0)
+            if a is not None and a.data(Qt.UserRole) == i:
+                return row
+        return None
 
     def _sync_table_checks(self):
         self.table.blockSignals(True)
         for row in range(self.table.rowCount()):
-            a = self.table.item(row, 0)
-            a.setCheckState(Qt.Unchecked if a.data(Qt.UserRole) in self.off_types
-                            else Qt.Checked)
+            _key, kept = self._row_key_kept(row)
+            self._paint_row(row, kept)
         self.table.blockSignals(False)
 
     def _table_changed(self, item):
         row = item.row()
-        t = self.table.item(row, 0).data(Qt.UserRole)
-        if item.column() == 0:
-            if item.checkState() == Qt.Checked:
-                self.off_types.discard(t)
-            else:
-                self.off_types.add(t)
-            for it in self.items:
-                if self.parts[it.index]["type"] == t:
-                    it.restyle()
-        elif item.column() == 2:
-            self.names[t] = item.text().strip()
+        key = self.table.item(row, 0).data(Qt.UserRole)
+        if self.text_mode:
+            if item.column() == 1:
+                self.parts[key]["text"] = item.text().strip()
+                self._style(key)
+            elif item.column() == 2:
+                self.names[key] = item.text().strip()
+        else:
+            if item.column() == 2:
+                self.names[key] = item.text().strip()
         self._update_add()
 
-    def _highlight_type(self):
+    def _highlight(self):
         rows = self.table.selectionModel().selectedRows()
-        t = self.table.item(rows[0].row(), 0).data(Qt.UserRole) if rows else None
-        sel = [it for it in self.items if self.parts[it.index]["type"] == t]
-        for it in self.items:
-            pen = it.pen()
-            pen.setWidthF(3.5 if it in sel else (2.0 if self.is_kept(it.index) else 1.2))
-            it.setPen(pen)
+        key = self.table.item(rows[0].row(), 0).data(Qt.UserRole) if rows else None
+        if self.text_mode:
+            sel = [key] if key is not None else []
+        else:
+            sel = [k for k, p in enumerate(self.parts) if p["type"] == key]
+        for k in range(len(self.items)):
+            self._style(k, bold=k in sel)
         if sel:
-            r = sel[0].sceneBoundingRect()
-            for it in sel[1:]:
-                r = r.united(it.sceneBoundingRect())
+            r = self.items[sel[0]].sceneBoundingRect()
+            for k in sel[1:]:
+                r = r.united(self.items[k].sceneBoundingRect())
             self.canvas.ensureVisible(r, 40, 40)
 
     def _update_add(self):
         n = len(self.kept())
-        self.addBtn.setText("Add %d check%s" % (n, "" if n == 1 else "s"))
+        what = {"parts": "Part present", "ocv": "Verify text", "ocr": "Read text"}[self.mode]
+        self.addBtn.setText("Add %d %s check%s" % (n, what, "" if n == 1 else "s"))
         self.addBtn.setEnabled(n > 0)
 
     # ---- adding --------------------------------------------------------------
     def add_checks(self):
-        kept = self.kept()
-        if not kept:
+        """One check per kept box, in one undo step. The added boxes leave
+        the picture; the panel stays open for the next area or kind."""
+        kept_idx = [i for i in range(len(self.parts)) if self.is_kept(i)]
+        if not kept_idx:
             return []
         tools = self.ed._tools()
         h, w = self.image.shape[:2]
-        names = {t: n for t, n in self.names.items() if n}
-        new = pf.presence_tools(kept, names, [t["id"] for t in tools], image_size=(w, h))
+        ids = [t["id"] for t in tools]
+        if self.text_mode:
+            items = [dict(self.parts[i], name=self.names.get(i, "")) for i in kept_idx]
+            new = pf.text_tools(items, self.mode, ids, image_size=(w, h),
+                                min_confidence=self.textConf.value())
+            what = "Verify text" if self.mode == "ocv" else "Read text"
+        else:
+            names = {t: n for t, n in self.names.items() if n}
+            new = pf.presence_tools([self.parts[i] for i in kept_idx], names, ids,
+                                    image_size=(w, h), thresholds=self.thresholds)
+            what = "Part present"
         tools.extend(new)
         self.ed._edited()                    # one step: Ctrl+Z takes them all back
-        self.ed.statusBar().showMessage(
-            "Added %d Part present checks - each box can be moved, resized or deleted; "
-            "Ctrl+Z takes them all back" % len(new), 10000)
-        self.close()
+        msg = ("Added %d %s check%s - each box can be moved, resized or deleted; Ctrl+Z "
+               "takes them all back" % (len(new), what, "" if len(new) == 1 else "s"))
+        self.ed.statusBar().showMessage(msg, 10000)
+        # what was added leaves the list; the rest stays to keep or drop
+        left = [p for i, p in enumerate(self.parts) if i not in set(kept_idx)]
+        self.parts, self.dropped, self.off_types = left, set(range(len(left))), set()
+        if self.text_mode:
+            self.names = {}
+        self._fill()
+        self.status.setText("Added %d %s check%s. Find more - another area or kind - or "
+                            "Close." % (len(new), what, "" if len(new) == 1 else "s"))
         return [t["id"] for t in new]
 
     def closeEvent(self, e):

@@ -11,6 +11,8 @@ and exchange text lines (ending in \\n or \\r\\n, upper or lower case):
     GET <job>.<tool>.<value>  a value from the last run, e.g. frt_top.hole_spacing.value_px
       -> VALUE <value>
     STATUS                    -> READY or BUSY
+    CODE <barcode>            -> CODE OK <code> | CODE NG <reason>   (barcode-gated
+                                 inspection: the part's code, before TRIGGER)
     PING                      -> PONG
     VERSION                   -> VISIONSTATION <protocol version>
 
@@ -28,6 +30,7 @@ PROTOCOL_VERSION = 1
 class LineServer(QObject):
     clientsChanged = Signal(int)
     commandReceived = Signal(str)
+    codeScanned = Signal(str)            # a valid barcode sent with CODE
 
     def __init__(self, station, port=3000, broadcast=False):
         super().__init__()
@@ -117,6 +120,16 @@ class LineServer(QObject):
             self._trigger(sock, arg)
         elif cmd == "GET":
             self._get(sock, arg)
+        elif cmd == "CODE":
+            # the part's barcode from the line, for barcode-gated inspection
+            gate = getattr(self.station, "barcode", None)
+            if gate is None or not gate.enabled:
+                self._send(sock, "ERROR barcode checking is off")
+            else:
+                ok, code, why = gate.scan(arg)
+                self._send(sock, ("CODE OK %s" % code) if ok else ("CODE NG %s" % why))
+                if ok:
+                    self.codeScanned.emit(code)
         else:
             self._send(sock, "ERROR unknown command: %s" % cmd)
 
@@ -134,6 +147,10 @@ class LineServer(QObject):
             pids = [j["pid"] for j in self.station.jobs]
         if not pids:
             self._send(sock, "ERROR no application open")
+            return
+        gate = getattr(self.station, "barcode", None)
+        if gate is not None and gate.enabled and gate.pending is None:
+            self._send(sock, "ERROR scan the barcode first, or send CODE <barcode>")
             return
         self._pending = {"sock": sock, "pids": pids}
         self._run = {"results": {}, "errors": {}}

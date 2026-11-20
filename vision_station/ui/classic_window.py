@@ -51,7 +51,7 @@ from vision_station.core.schema import GROUPS, LABELS, SCHEMA, defaults
 
 from vision_station import paths
 
-HERE = paths.ROOT
+HERE = paths.APP_DIR        # projects/ is here (beside the .exe when packaged)
 
 TRAINING_HELP = """Building your own detector
 
@@ -464,7 +464,13 @@ class PropertySheet(QWidget):
                                       "intlist": "[-5,5]"}.get(kind, ""))
                 w.editingFinished.connect(
                     lambda k=key, kk=kind, ww=w: self._set_text(k, kk, ww.text(), ww))
-            self.form.addRow(lab, w)
+            # the name wraps rather than widening the form past the panel:
+            # "Ignore lines read with confidence below" cut every field off
+            ql = QLabel(lab)
+            ql.setWordWrap(True)
+            ql.setMaximumWidth(140)
+            ql.setMinimumWidth(min(ql.fontMetrics().horizontalAdvance(lab) + 4, 110))
+            self.form.addRow(ql, w)
             if self.simple:
                 why = help_for(tool["type"], key)
                 if why:

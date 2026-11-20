@@ -318,7 +318,9 @@ def test_the_station_saves_each_result_picture_in_the_background(tmp_path):
     assert not w.submit(img, ok, "job")              # accepted parts not asked for
     assert w.submit(img, _result(), "job")
     w.flush()
-    files = os.listdir(str(tmp_path))
+    day = ri.day_folder()
+    assert os.listdir(str(tmp_path)) == [day], "pictures not in a folder for the day"
+    files = os.listdir(os.path.join(str(tmp_path), day))
     assert len(files) == 1 and files[0].endswith("_job_REJECT.jpg"), files
 
 
@@ -374,8 +376,12 @@ needs_model = pytest.mark.skipif(
 
 
 @needs_model
-def test_the_network_finds_parts_on_a_synthetic_board():
+def test_the_network_finds_parts_on_a_synthetic_board(monkeypatch):
+    # the general model: one trained for a real board (parts_trained.onnx,
+    # preferred when present) rightly finds nothing on a drawn one
     from vision_station.core import part_finder as pf
+    monkeypatch.setattr(pf, "MODEL", pf.GENERAL)
+    pf._NET.clear()
     img = np.full((900, 1400, 3), (40, 95, 35), np.uint8)
     rng = np.random.default_rng(0)
     placed = []
@@ -399,6 +405,7 @@ def test_the_network_finds_parts_on_a_synthetic_board():
             if ix * iy > 0.5 * w * h:
                 hits += 1
                 break
+    pf._NET.clear()
     assert hits >= 4, (hits, r["parts"])
     # refiltering reuses the network's output
     r2 = pf.find_parts(img, None, 0.2, raw=r["candidates"])
@@ -471,4 +478,365 @@ def test_rotation_is_kept_in_settings(qapp, tmp_path):
     assert sd.load_camera_settings(qs, 0).rotation == 270
     for key in ("general", "camera", "results", "line", "security"):
         assert dlg.show_page(key) is dlg.stack.currentWidget()
+    dlg.close()
+
+
+# ---------------------------------------------------------------- results in words
+def test_every_check_says_its_result_in_words():
+    from vision_station.core import annotate
+    ocv_ng = {"type": "ocv", "status": "fail", "values": {"text": "AB12345X", "lines": ["AB12345X"]}}
+    assert annotate.caption(ocv_ng, {"expect_text": "AB123456"}) == \
+        ["NG  read: AB12345X", "expected: AB123456"]
+    ocv_ok = {"type": "ocv", "status": "pass", "values": {"text": "AB123456"}}
+    assert annotate.caption(ocv_ok, {"expect_text": "AB123456"}) == ["AB123456"]
+    m = {"type": "measure_length", "status": "pass", "values": {"length_px": 280.1, "length_mm": 25.0}}
+    assert annotate.caption(m) == ["OK  25 mm"]
+    m_px = {"type": "measure_length", "status": "pass", "values": {"length_px": 280.12}}
+    assert annotate.caption(m_px) == ["OK  280.1 px"]
+    assert annotate.caption({"type": "presence", "status": "fail", "values": {}}) == ["NG"]
+    assert annotate.caption({"type": "count_blob", "status": "fail",
+                             "values": {"count": 3, "expected": 4}}) == ["NG  3 / 4"]
+    c = {"type": "find_circle", "status": "pass", "values": {"radius_px": 10.0, "diameter_mm": 3.2}}
+    assert annotate.caption(c) == ["OK  Ø 3.2 mm"]
+
+
+def test_a_round_region_is_outlined_round_and_ok_is_blue():
+    import cv2
+    from vision_station.core.engine import Project
+    from vision_station.core import annotate
+    demo = os.path.join(HERE, "projects", "demo_led_panel")
+    p = Project(demo)
+    p.spec["tools"] = [t for t in p.spec["tools"] if t["type"] == "align"] + [
+        {"id": "screw_round", "type": "presence",
+         "params": {"roi": [40, 290, 46, 46], "shape": "ellipse", "min_score": 0.5}}]
+    p.tools = p.build_tools()
+    img = cv2.imread(os.path.join(demo, "good.png"))
+    res = p.inspect(img)
+    t = [x for x in res["tools"] if x["tool_id"] == "screw_round"][0]
+    region = [g for g in t["graphics"] if g.get("role") == "region"]
+    assert len(region) == 1 and region[0]["kind"] == "poly" and len(region[0]["points"]) > 20, \
+        "a round region was not outlined round"
+    assert t["caption"] == ["OK"]
+    out = annotate.draw(img, res, banner=False)
+    blue = annotate.colour_bgr("pass")
+    near = np.abs(out.astype(int) - np.array(blue)).sum(axis=2) < 40
+    assert near.sum() > 50, "the OK outline is not blue"
+
+
+def test_an_area_drawn_first_becomes_the_next_checks_region(qapp, tmp_path):
+    import shutil
+    from PySide6.QtCore import QSettings
+    from vision_station.ui import main_window as V
+    shutil.copytree(os.path.join(HERE, "projects", "demo_led_panel"),
+                    str(tmp_path / "projects" / "demo_led_panel"),
+                    ignore=shutil.ignore_patterns("results", "dataset"))
+    ini = str(tmp_path / "s.ini")
+    orig = V.QuickBuild._settings
+    V.QuickBuild._settings = lambda self: QSettings(ini, QSettings.IniFormat)
+    try:
+        qb = V.QuickBuild(str(tmp_path / "projects"))
+        ed = qb.open_job_editor(qb.station.jobs[0]["pid"])
+        ed.tree.setCurrentItem(None)
+        ed._canvas_drawn("ellipse", {"roi": [100, 120, 60, 40]})
+        assert ed._pending_area is not None
+        tid = ed.add_tool("presence")
+        params = ed._tool(tid)["params"]
+        assert params["roi"] == [100, 120, 60, 40] and params["shape"] == "ellipse"
+        assert ed._pending_area is None
+        qb.dirty.clear()
+        qb.close()
+    finally:
+        V.QuickBuild._settings = orig
+
+
+def test_the_camera_keeps_its_address_after_a_restart():
+    import fake_pylon as F
+    dev = F.Device("gige_classic", ip="192.168.3.6")
+    F, cam = _fresh_camera([dev])
+    pc = cam.PylonCamera(0, "192.168.3.6")
+    pc.open()
+    ip = pc.ip_config()
+    assert ip["current_mask"] == "255.255.255.0" and ip["stored_mask"] == "255.255.0.0"
+    assert not ip["keeps_current"], "a mismatched stored mask was not noticed"
+    ip = pc.store_ip()
+    assert ip["keeps_current"] and ip["stored_mask"] == "255.255.255.0" and ip["stored_on"]
+    assert dev.nodes["GevCurrentIPConfiguration"].value & 0x1
+    pc.close()
+
+
+# ---------------------------------------------------------------- finding text
+def _editor(tmp_path):
+    import shutil
+    from PySide6.QtCore import QSettings
+    from vision_station.ui import main_window as V
+    shutil.copytree(os.path.join(HERE, "projects", "demo_led_panel"),
+                    str(tmp_path / "projects" / "demo_led_panel"),
+                    ignore=shutil.ignore_patterns("results", "dataset"))
+    ini = str(tmp_path / "s.ini")
+    V.QuickBuild._settings = lambda self: QSettings(ini, QSettings.IniFormat)
+    qb = V.QuickBuild(str(tmp_path / "projects"))
+    qb.resize(1400, 900)
+    qb.show()
+    ed = qb.open_job_editor(qb.station.jobs[0]["pid"])
+    return qb, ed
+
+
+def _drag(canvas, start, end):
+    """A real mouse drag on the canvas, from scene point to scene point."""
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    vp = canvas.viewport()
+    a = canvas.mapFromScene(QPointF(*start))
+    b = canvas.mapFromScene(QPointF(*end))
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, a)
+    for k in range(1, 9):
+        p = QPoint(int(a.x() + (b.x() - a.x()) * k / 8), int(a.y() + (b.y() - a.y()) * k / 8))
+        QTest.mouseMove(vp, p)
+        QApplication.processEvents()
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, b)
+    QApplication.processEvents()
+
+
+from PySide6.QtCore import Qt  # noqa: E402
+
+
+@pytest.mark.skipif(not __import__("vision_station.tools.ocr_engine", fromlist=["x"]).onnx_available(),
+                    reason="text reader models not installed")
+def test_text_found_in_an_area_becomes_verify_text_checks(qapp, tmp_path):
+    import cv2
+    from PySide6.QtWidgets import QApplication
+    from vision_station.ui import main_window as V
+    orig = V.QuickBuild._settings
+    try:
+        qb, ed = _editor(tmp_path)
+        before = len(ed._tools())
+        panel = ed.find_parts()
+        panel.set_mode("ocv")
+        assert panel.findBtn.text() == "Find text"
+        panel.set_area([100, 200, 340, 120])
+        panel.find(wait=True)
+        QApplication.processEvents()
+        assert [p["text"] for p in panel.parts] == ["AB123456"], panel.parts
+        x, y, w, h = panel.parts[0]["box"]
+        # resize the text box from its bottom-right corner with the mouse
+        _drag(panel.canvas, (x + w, y + h), (x + w + 12, y + h + 6))
+        nx, ny, nw, nh = panel.parts[0]["box"]
+        assert nw > w and nh > h, "dragging the corner did not resize the box"
+        assert panel.parts[0]["text"] == "AB123456", "the box was not read again"
+        # the expected text and the check's name, from the list
+        panel.table.item(0, 2).setText("lot_code")
+        new = panel.add_checks()
+        assert new == ["lot_code_01"]
+        t = ed._tool("lot_code_01")
+        assert t["type"] == "ocv" and t["params"]["expect_text"] == "AB123456"
+        assert len(ed._tools()) == before + 1
+        assert panel.isVisible(), "the panel closed after adding"
+        p = qb.station.projects[qb.station.jobs[0]["pid"]]
+        p.tools = p.build_tools()
+        demo = os.path.join(HERE, "projects", "demo_led_panel")
+        ok = {r["tool_id"]: r for r in p.inspect(cv2.imread(os.path.join(demo, "good.png")))["tools"]}
+        ng = {r["tool_id"]: r for r in p.inspect(cv2.imread(os.path.join(demo, "bad.png")))["tools"]}
+        assert ok["lot_code_01"]["status"] == "pass", ok["lot_code_01"]["message"]
+        assert ng["lot_code_01"]["status"] == "fail"
+        assert ng["lot_code_01"]["caption"] == ["NG  read: AB12345X", "expected: AB123456"]
+        panel.close()
+        qb.dirty.clear()
+        qb.close()
+    finally:
+        V.QuickBuild._settings = orig
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(HERE, "models", "parts", "parts_yoloe26s.onnx")),
+                    reason="part model not installed")
+def test_a_found_part_box_can_be_moved_before_it_becomes_a_check(qapp, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from vision_station.ui import main_window as V
+    orig = V.QuickBuild._settings
+    try:
+        qb, ed = _editor(tmp_path)
+        panel = ed.find_parts()
+        panel.find(wait=True)
+        QApplication.processEvents()
+        assert panel.parts, "nothing found on the demo"
+        x, y, w, h = panel.parts[0]["box"]
+        _drag(panel.canvas, (x + w / 2, y + h / 2), (x + w / 2 + 15, y + h / 2 + 10))
+        nx, ny, nw, nh = panel.parts[0]["box"]
+        # moved by the drag (to the pixel: screen-to-picture rounding), same size
+        assert abs(nx - x - 15) <= 1 and abs(ny - y - 10) <= 1 and (nw, nh) == (w, h), \
+            panel.parts[0]["box"]
+        panel._keep_all(False)
+        panel.toggle_part(0)
+        new = panel.add_checks()
+        assert len(new) == 1 and ed._tool(new[0])["type"] == "presence"
+        roi = ed._tool(new[0])["params"]["roi"]
+        assert roi[0] < nx and roi[1] < ny, "the check did not take the moved box"
+        panel.close()
+        qb.dirty.clear()
+        qb.close()
+    finally:
+        V.QuickBuild._settings = orig
+
+
+# ---------------------------------------------------------------- result colours and lines
+@pytest.fixture
+def factory_look():
+    from vision_station.core import annotate
+    annotate.set_look()
+    yield annotate
+    annotate.set_look()
+
+
+def test_result_look_is_solid_never_shared_and_reaches_pictures_and_screen(qapp, factory_look):
+    import cv2
+    A = factory_look
+    from vision_station.ui import canvas, modern
+    assert A.solid_hex("#80ff0000") is None and A.solid_hex("0f0") == "#00FF00"
+    assert A.set_look("#FFB900", "#10893E", 2.0)
+    assert A.colour_hex("pass") == "#FFB900" and A.colour_hex("fail") == "#10893E"
+    assert canvas.PASS.name().upper() == "#FFB900" and canvas.FAIL.name().upper() == "#10893E"
+    assert canvas.RESULT_W == A.DEFAULT_LINE_SCREEN_PX * 2.0
+    assert modern._PILL["PASS"][1] == "#FFB900"
+    # the same colour for both: NG falls back so the two still differ
+    A.set_look("#FF2A2A", "#FF2A2A")
+    assert A.colour_hex("pass") != A.colour_hex("fail")
+    # nonsense falls back to the factory look
+    A.set_look("pink", None, "x")
+    assert (A.STYLE["ok"], A.STYLE["ng"]) == (A.DEFAULT_OK, A.DEFAULT_NG)
+    assert A.STYLE["line_picture"] == A.DEFAULT_LINE_PICTURE
+    # thickness reaches a saved picture; a light banner gets dark words
+    img = np.full((400, 600, 3), 128, np.uint8)
+    raw = {"verdict": "PASS", "total_ms": 1.0, "tools": [
+        {"tool_id": "t", "status": "pass", "caption": [],
+         "graphics": [{"kind": "rect", "role": "region", "points": [[100, 100], [300, 300]]}]}]}
+    def ink_pixels(scale):
+        A.set_look("#FFB900", None, scale)
+        out = A.draw(img, raw, banner=False, labels=False)
+        return (np.abs(out.astype(int) - np.array(A.colour_bgr("pass"))).sum(axis=2) < 30).sum()
+    assert ink_pixels(3.0) > 2 * ink_pixels(1.0)
+    out = A.draw(img, raw, banner=True)
+    assert (out[: out.shape[0] - 400] < 40).all(axis=2).any(), "no dark words on a yellow banner"
+
+
+def test_writer_configure_applies_the_look(factory_look):
+    from vision_station.core.result_images import ResultImageWriter
+    w = ResultImageWriter()
+    w.configure({"ok_colour": "#0078D7", "ng_colour": "#E81123", "line_scale": 1.5})
+    assert factory_look.STYLE["ok"] == "#0078D7" and factory_look.STYLE["ng"] == "#E81123"
+    assert factory_look.STYLE["line_screen_px"] == factory_look.DEFAULT_LINE_SCREEN_PX * 1.5
+
+
+def test_accent_picker_interlock_greys_out_the_other_colour(qapp):
+    from vision_station.ui.accent_picker import AccentPicker, WINDOWS_COLOURS, interlock, set_pair
+    ok, ng = AccentPicker("#1F6FFF", name="OK"), AccentPicker("#FF2A2A", name="NG")
+    interlock(ok, ng)
+    assert len(ok.swatches) == 48
+    yellow = [s for s in ok.swatches if s.colour == "#FFB900"][0]
+    yellow.click()
+    assert ok.colour() == "#FFB900" and yellow.isChecked()
+    ng_yellow = [s for s in ng.swatches if s.colour == "#FFB900"][0]
+    assert not ng_yellow.isEnabled() and "OK" in ng_yellow.toolTip()
+    ng_yellow.click()                                      # greyed out: nothing happens
+    assert ng.colour() == "#FF2A2A"
+    assert not ng.set_colour("#FFB900")
+    # choosing another OK colour frees yellow for NG
+    [s for s in ok.swatches if s.colour == "#0078D7"][0].click()
+    assert ng_yellow.isEnabled()
+    ng_yellow.click()
+    assert ng.colour() == "#FFB900"
+    assert not [s for s in ok.swatches if s.colour == "#FFB900"][0].isEnabled()
+    # saved colours swapped load; the same colour twice cannot
+    set_pair(ok, ng, "#FFB900", "#0078D7", "#FF2A2A")
+    assert (ok.colour(), ng.colour()) == ("#FFB900", "#0078D7")
+    set_pair(ok, ng, "#107C10", "#107C10", "#FF2A2A")
+    assert ok.colour() == "#107C10" and ng.colour() == "#FF2A2A"
+    # recent colours do not pile up layout stretches
+    for c in WINDOWS_COLOURS[:10]:
+        if c != ng.colour():
+            ok.set_colour(c)
+    assert ok.recentRow.count() <= 7
+
+
+def test_results_page_saves_and_loads_colours_and_thickness(qapp, tmp_path, factory_look):
+    from PySide6.QtCore import QSettings
+    from vision_station.ui import settings_dialog as S
+    qs = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    got = []
+    dlg = S.SettingsDialog(qs=qs, open_camera=lambda *a, **k: None, on_results=got.append,
+                           page="results")
+    p = dlg.resultsPage
+    assert p.values()["ok_colour"] == factory_look.DEFAULT_OK
+    [s for s in p.okColour.swatches if s.colour == "#00CC6A"][0].click()
+    p.lineScale.setCurrentIndex(p.lineScale.findData(2.0))
+    d = dlg.apply_results()
+    assert d["ok_colour"] == "#00CC6A" and d["line_scale"] == 2.0 and got
+    loaded = S.load_result_settings(qs)
+    assert loaded["ok_colour"] == "#00CC6A" and loaded["ng_colour"] == factory_look.DEFAULT_NG
+    dlg2 = S.SettingsDialog(qs=qs, open_camera=lambda *a, **k: None, page="results")
+    assert dlg2.resultsPage.okColour.colour() == "#00CC6A"
+    assert dlg2.resultsPage.lineScale.currentData() == 2.0
+    dlg2.resultsPage._reset_look()
+    assert dlg2.resultsPage.values()["ok_colour"] == factory_look.DEFAULT_OK
+    assert dlg2.resultsPage.values()["line_scale"] == 1.0
+    dlg.close(); dlg2.close()
+
+
+def test_every_settings_page_restores_its_defaults_and_keeps_where_things_are(
+        qapp, tmp_path, factory_look, monkeypatch):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox
+    from vision_station.ui import settings_dialog as S
+    qs = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    dlg = S.SettingsDialog(qs=qs, open_camera=lambda *a, **k: None, page="general")
+    for key, page in dlg._pages.items():
+        assert page.restoreBtn.text() == "Restore defaults", key
+        assert not page.restoreBtn.autoDefault(), key
+    # asked first: No changes nothing
+    cam = dlg.cameraPage
+    cam.address.setText("192.168.3.6")
+    cam.exposure.setValue(77.0)
+    cam.revX.setChecked(True)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No))
+    assert not cam.ask_restore()
+    assert cam.exposure.value() == 77.0
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+    assert cam.ask_restore()
+    d = S.CameraSettings()
+    assert cam.exposure.value() == float(d.exposure_ms) and not cam.revX.isChecked()
+    assert cam.address.text() == "192.168.3.6"
+    # results: everything back, the folder kept
+    res = dlg.resultsPage
+    res.folder.setText(str(tmp_path / "pics"))
+    res.which.setCurrentIndex(res.which.findData("fail"))
+    res.quality.setValue(80)
+    [s for s in res.okColour.swatches if s.colour == "#00CC6A"][0].click()
+    res.lineScale.setCurrentIndex(res.lineScale.findData(3.0))
+    res.restore_defaults()
+    v = res.values()
+    assert all(v[k] == S.RESULT_DEFAULTS[k] for k in v if k != "folder"), v
+    assert v["folder"] == str(tmp_path / "pics")
+    # barcode: rules back, the scanner's connection kept
+    from vision_station.core import barcode as rules
+    bc = dlg.barcodePage
+    bc.form.prefix.setText("FIC")
+    bc.form.length.setValue(11)
+    before = bc.values()
+    bc.restore_defaults()
+    after = bc.values()
+    assert after["prefix"] == rules.DEFAULTS["prefix"] and after["length"] == rules.DEFAULTS["length"]
+    assert (after["source"], after["port"], after["baud"]) == \
+        (before["source"], before["port"], before["baud"])
+    # light: levels and timing back, the port kept
+    from vision_station.hardware import light as L
+    lp = dlg.lightPage
+    lp.show_values(dict(L.DEFAULTS, port="COM7", channels=2, on_before_ms=999,
+                        target_percent=80, auto=True))
+    lp.restore_defaults()
+    lv = lp.values()
+    assert lv["port"] == "COM7" and lv["channels"] == 2
+    assert lv["on_before_ms"] == L.DEFAULTS["on_before_ms"]
+    assert lv["target_percent"] == L.DEFAULTS["target_percent"] and not lv["auto"]
+    # without the main window, pages with nothing to restore say so
+    assert not dlg.securityPage.restoreBtn.isEnabled()
+    assert dlg.linePage.restore_defaults() is False
     dlg.close()
