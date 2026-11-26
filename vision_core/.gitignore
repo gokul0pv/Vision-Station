@@ -4,3 +4,4 @@ build-debug/
 *.pdb
 *.ilk
 logs/
+dist/

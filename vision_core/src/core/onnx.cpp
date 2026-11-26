@@ -11,7 +11,7 @@ namespace vc {
 
 namespace {
 Ort::Env& env() {
-    static Ort::Env e(ORT_LOGGING_LEVEL_WARNING, "vision-core");
+    static Ort::Env e(ORT_LOGGING_LEVEL_ERROR, "vision-core");
     return e;
 }
 std::mutex g_dml_lock;   // DirectML takes one run at a time (as Vision Station's _DML_LOCK)
