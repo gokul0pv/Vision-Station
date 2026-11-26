@@ -1,0 +1,565 @@
+// Vision Core Studio. Dark, rounded, quiet: the picture is the hero, results
+// read at a glance. Icons: Lucide (ISC). Font: Inter (OFL).
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+
+export global Theme {
+    out property <color> bg: #0b0d12;
+    out property <color> surface: #12151d;
+    out property <color> surface2: #181c26;
+    out property <color> surface3: #202533;
+    out property <color> hair: #262c3b;
+    out property <color> text: #eceef4;
+    out property <color> text2: #9aa3b6;
+    out property <color> text3: #646c7f;
+    out property <color> accent: #7c5cff;
+    out property <color> accent2: #4f8cff;
+    out property <color> pass: #22c55e;
+    out property <color> fail: #f43f5e;
+    out property <color> warn: #f59e0b;
+    out property <color> err: #f97316;
+    out property <length> r-card: 18px;
+    out property <length> r-ctl: 12px;
+    out property <string> font: "Inter";
+    pure public function status-color(s: string) -> color {
+        if (s == "pass") { return pass; }
+        if (s == "fail") { return fail; }
+        if (s == "warn") { return warn; }
+        if (s == "error") { return err; }
+        return text3;
+    }
+}
+
+export struct CheckItem {
+    id: string,
+    kind: string,
+    status: string,
+    score: string,
+    message: string,
+}
+
+export struct Overlay {
+    commands: string,
+    status: string,
+    region: bool,
+    label: string,
+    lx: float,
+    ly: float,
+}
+
+export struct Pic {
+    name: string,
+    path: string,
+    verdict: string,
+}
+
+export struct KV {
+    key: string,
+    value: string,
+}
+
+component Icon inherits Image {
+    in property <color> tint: Theme.text;
+    colorize: tint;
+    width: 18px;
+    height: 18px;
+    image-fit: contain;
+}
+
+component Button inherits Rectangle {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 40px;
+    min-width: lay.preferred-width;
+    border-radius: Theme.r-ctl;
+    background: !enabled ? Theme.surface2 : primary
+        ? (ta.pressed ? #6a4ae8 : ta.has-hover ? #8c70ff : Theme.accent)
+        : (ta.pressed ? Theme.surface3 : ta.has-hover ? #232938 : Theme.surface2);
+    border-width: primary ? 0px : 1px;
+    border-color: Theme.hair;
+    opacity: enabled ? 1.0 : 0.5;
+    animate background { duration: 120ms; easing: ease-out; }
+    lay := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 16px;
+        spacing: 8px;
+        alignment: center;
+        Icon {
+            source: root.icon;
+            tint: root.primary ? #ffffff : Theme.text2;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: root.primary ? #ffffff : Theme.text;
+            font-family: Theme.font;
+            font-size: 13.5px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Theme.text2;
+    height: 22px;
+    width: t.preferred-width + 18px;
+    border-radius: 11px;
+    background: tone.with-alpha(0.14);
+    t := Text {
+        text: root.text;
+        color: root.tone;
+        font-family: Theme.font;
+        font-size: 11px;
+        font-weight: 600;
+        x: 9px;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+}
+
+component Card inherits Rectangle {
+    background: Theme.surface;
+    border-radius: Theme.r-card;
+    border-width: 1px;
+    border-color: Theme.hair;
+    clip: true;
+}
+
+component VerdictPill inherits Rectangle {
+    in property <string> verdict;
+    in property <bool> busy;
+    height: 44px;
+    width: 150px;
+    border-radius: 22px;
+    background: busy ? Theme.surface2
+        : verdict == "PASS" ? Theme.pass.with-alpha(0.16)
+        : verdict == "FAIL" ? Theme.fail.with-alpha(0.16)
+        : verdict == "WARN" ? Theme.warn.with-alpha(0.16) : Theme.surface2;
+    border-width: 1px;
+    border-color: busy ? Theme.hair
+        : verdict == "PASS" ? Theme.pass.with-alpha(0.5)
+        : verdict == "FAIL" ? Theme.fail.with-alpha(0.5)
+        : verdict == "WARN" ? Theme.warn.with-alpha(0.5) : Theme.hair;
+    animate background, border-color { duration: 200ms; easing: ease-out; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 9px;
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: root.busy ? Theme.accent : Theme.status-color(root.verdict == "PASS" ? "pass" : root.verdict == "FAIL" ? "fail" : root.verdict == "WARN" ? "warn" : "");
+        }
+        Text {
+            text: root.busy ? "Inspecting" : root.verdict == "" ? "Ready" : root.verdict;
+            color: Theme.text;
+            font-family: Theme.font;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component CheckRow inherits Rectangle {
+    in property <CheckItem> item;
+    in property <bool> selected;
+    callback clicked();
+    height: 52px;
+    border-radius: 12px;
+    background: selected ? Theme.surface3 : ta.has-hover ? Theme.surface2 : transparent;
+    animate background { duration: 100ms; }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: Theme.status-color(root.item.status);
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.id;
+                color: Theme.text;
+                font-family: Theme.font;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.message != "" ? root.item.message : root.item.kind;
+                color: root.item.message != "" ? Theme.status-color(root.item.status).with-alpha(0.9) : Theme.text3;
+                font-family: Theme.font;
+                font-size: 11.5px;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: root.item.score;
+            color: Theme.text2;
+            font-family: Theme.font;
+            font-size: 12px;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            width: 44px;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component StudioWindow inherits Window {
+    title: "Vision Core Studio";
+    preferred-width: 1480px;
+    preferred-height: 920px;
+    background: Theme.bg;
+    default-font-family: Theme.font;
+    icon: @image-url("icons/sparkles.svg");
+
+    in property <string> job-name: "";
+    in property <string> folder-name: "";
+    in property <[Pic]> pictures: [];
+    in-out property <int> current-pic: -1;
+    in property <image> picture;
+    in property <float> img-w: 1;
+    in property <float> img-h: 1;
+    in property <[Overlay]> overlays: [];
+    in property <[CheckItem]> checks: [];
+    in-out property <int> selected-check: -1;
+    in property <[KV]> details: [];
+    in property <string> detail-title: "";
+    in property <string> detail-status: "";
+    in property <string> detail-message: "";
+    in property <string> verdict: "";
+    in property <bool> busy: false;
+    in property <string> total-ms: "";
+    in property <string> engine-status: "starting";
+    in property <string> device: "";
+    in property <string> counts: "";
+    in property <string> notice: "";
+    in-out property <float> zoom: 1.0;
+    in-out property <length> pan-x: 0px;
+    in-out property <length> pan-y: 0px;
+
+    callback open-job();
+    callback open-pictures();
+    callback run();
+    callback pick-picture(int);
+    callback pick-check(int);
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        // ------------------------------------------------------------ top bar
+        Rectangle {
+            height: 64px;
+            background: Theme.surface;
+            border-radius: Theme.r-card;
+            border-width: 1px;
+            border-color: Theme.hair;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 12px;
+                spacing: 10px;
+                alignment: stretch;
+                Rectangle {
+                    width: 38px;
+                    height: 38px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent2 100%);
+                    Icon { source: @image-url("icons/sparkles.svg"); tint: #ffffff; width: 20px; height: 20px; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    width: 170px;
+                    Text { text: "Vision Core"; color: Theme.text; font-size: 15.5px; font-weight: 700; }
+                    Text { text: "Studio"; color: Theme.text3; font-size: 11.5px; font-weight: 500; }
+                }
+                Rectangle { width: 1px; background: Theme.hair; }
+                Button { icon: @image-url("icons/layers.svg"); text: root.job-name == "" ? "Open job" : root.job-name; clicked => { root.open-job(); } y: (parent.height - self.height) / 2; }
+                Button { icon: @image-url("icons/folder-open.svg"); text: root.folder-name == "" ? "Open pictures" : root.folder-name; clicked => { root.open-pictures(); } y: (parent.height - self.height) / 2; }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.total-ms;
+                    color: Theme.text2;
+                    font-size: 13px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                }
+                Button {
+                    icon: @image-url("icons/play.svg");
+                    text: "Run";
+                    primary: true;
+                    enabled: !root.busy && root.job-name != "" && root.current-pic >= 0;
+                    clicked => { root.run(); }
+                    y: (parent.height - self.height) / 2;
+                }
+                VerdictPill { verdict: root.verdict; busy: root.busy; y: (parent.height - self.height) / 2; }
+            }
+        }
+
+        // ---------------------------------------------------------------- body
+        HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            // checks
+            Card {
+                width: 330px;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Icon { source: @image-url("icons/list.svg"); tint: Theme.text2; y: 1px; }
+                        Text { text: "Checks"; color: Theme.text; font-size: 14px; font-weight: 700; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.counts; color: Theme.text3; font-size: 12px; horizontal-alignment: right; }
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        viewport-height: col.preferred-height;
+                        col := VerticalLayout {
+                            spacing: 2px;
+                            for c[i] in root.checks: CheckRow {
+                                item: c;
+                                selected: i == root.selected-check;
+                                clicked => { root.selected-check = i; root.pick-check(i); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // picture
+            VerticalLayout {
+                spacing: 12px;
+                horizontal-stretch: 1;
+                Card {
+                    vertical-stretch: 1;
+                    background: #07080b;
+                    canvas := Rectangle {
+                        property <float> fit: min(self.width / (root.img-w * 1px), self.height / (root.img-h * 1px));
+                        property <float> scale: fit * root.zoom;
+                        property <length> dw: root.img-w * 1px * scale;
+                        property <length> dh: root.img-h * 1px * scale;
+                        property <length> ox: (self.width - dw) / 2 + root.pan-x;
+                        property <length> oy: (self.height - dh) / 2 + root.pan-y;
+                        Image {
+                            source: root.picture;
+                            x: canvas.ox;
+                            y: canvas.oy;
+                            width: canvas.dw;
+                            height: canvas.dh;
+                            image-fit: fill;
+                            image-rendering: smooth;
+                        }
+                        for o in root.overlays: Path {
+                            x: canvas.ox;
+                            y: canvas.oy;
+                            width: canvas.dw;
+                            height: canvas.dh;
+                            viewbox-x: 0;
+                            viewbox-y: 0;
+                            viewbox-width: root.img-w;
+                            viewbox-height: root.img-h;
+                            commands: o.commands;
+                            stroke: Theme.status-color(o.status);
+                            stroke-width: o.region ? 1.6px : 2.2px;
+                            fill: Theme.status-color(o.status).with-alpha(o.region ? 0.06 : 0.0);
+                        }
+                        ta := TouchArea {
+                            property <length> px0;
+                            property <length> py0;
+                            mouse-cursor: self.pressed ? grabbing : grab;
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down) {
+                                    self.px0 = self.mouse-x - root.pan-x;
+                                    self.py0 = self.mouse-y - root.pan-y;
+                                }
+                            }
+                            moved => {
+                                if (self.pressed) {
+                                    root.pan-x = self.mouse-x - self.px0;
+                                    root.pan-y = self.mouse-y - self.py0;
+                                }
+                            }
+                            double-clicked => { root.zoom = 1.0; root.pan-x = 0px; root.pan-y = 0px; }
+                            scroll-event(e) => {
+                                root.zoom = clamp(root.zoom * (e.delta-y > 0 ? 1.15 : 1 / 1.15), 0.5, 40);
+                                accept
+                            }
+                        }
+                        if root.job-name == "" || root.current-pic < 0: VerticalLayout {
+                            alignment: center;
+                            spacing: 10px;
+                            Icon {
+                                source: @image-url("icons/scan-line.svg");
+                                tint: Theme.text3;
+                                width: 46px;
+                                height: 46px;
+                                x: (parent.width - self.width) / 2;
+                            }
+                            Text {
+                                text: root.job-name == "" ? "Open a job to begin" : "Open pictures, then pick one";
+                                color: Theme.text2;
+                                font-size: 15px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                }
+                // film strip
+                Card {
+                    height: 76px;
+                    Flickable {
+                        viewport-width: strip.preferred-width;
+                        strip := HorizontalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+                            for p[i] in root.pictures: Rectangle {
+                                width: 150px;
+                                border-radius: 12px;
+                                background: i == root.current-pic ? Theme.surface3 : pa.has-hover ? Theme.surface2 : transparent;
+                                border-width: i == root.current-pic ? 1px : 0px;
+                                border-color: Theme.accent.with-alpha(0.7);
+                                HorizontalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+                                    Rectangle {
+                                        width: 8px;
+                                        height: 8px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 4px;
+                                        background: p.verdict == "PASS" ? Theme.pass : p.verdict == "FAIL" ? Theme.fail : p.verdict == "WARN" ? Theme.warn : Theme.text3;
+                                    }
+                                    Text {
+                                        text: p.name;
+                                        color: i == root.current-pic ? Theme.text : Theme.text2;
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                pa := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.current-pic = i; root.pick-picture(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // inspector
+            Card {
+                width: 340px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Icon { source: @image-url("icons/activity.svg"); tint: Theme.text2; y: 1px; }
+                        Text { text: "Result"; color: Theme.text; font-size: 14px; font-weight: 700; }
+                    }
+                    if root.detail-title == "": Text {
+                        text: "Select a check to see what it measured.";
+                        color: Theme.text3;
+                        font-size: 12.5px;
+                        wrap: word-wrap;
+                    }
+                    if root.detail-title != "": VerticalLayout {
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: root.detail-title; color: Theme.text; font-size: 17px; font-weight: 700; overflow: elide; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Chip { text: root.detail-status; tone: Theme.status-color(root.detail-status); y: 2px; }
+                        }
+                        if root.detail-message != "": Rectangle {
+                            border-radius: 12px;
+                            background: Theme.status-color(root.detail-status).with-alpha(0.1);
+                            height: msg.preferred-height + 20px;
+                            msg := Text {
+                                x: 12px;
+                                y: 10px;
+                                width: parent.width - 24px;
+                                text: root.detail-message;
+                                color: Theme.text;
+                                font-size: 12.5px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        viewport-height: kv.preferred-height;
+                        kv := VerticalLayout {
+                            spacing: 6px;
+                            for d in root.details: Rectangle {
+                                height: max(36px, vt.preferred-height + 16px);
+                                border-radius: 10px;
+                                background: Theme.surface2;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    Text { text: d.key; color: Theme.text2; font-size: 12px; font-weight: 500; vertical-alignment: center; width: 110px; overflow: elide; }
+                                    vt := Text { text: d.value; color: Theme.text; font-size: 12.5px; font-weight: 600; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------- status bar
+        HorizontalLayout {
+            height: 22px;
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 14px;
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    y: 7px;
+                    border-radius: 4px;
+                    background: root.engine-status == "ready" ? Theme.pass : root.engine-status == "starting" ? Theme.warn : Theme.fail;
+                }
+                Text { text: "Engine " + root.engine-status; color: Theme.text3; font-size: 11.5px; vertical-alignment: center; }
+            }
+            Text { text: root.device; color: Theme.text3; font-size: 11.5px; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: root.notice; color: Theme.text2; font-size: 11.5px; vertical-alignment: center; overflow: elide; }
+            Text { text: "Made with Slint"; color: Theme.text3; font-size: 11px; vertical-alignment: center; }
+        }
+    }
+}
