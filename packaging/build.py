@@ -66,16 +66,12 @@ def version():
 
 
 def make_icon(path):
-    """The application's own logo (ui/icons.py) as a multi-size .ico."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-    from PIL import Image
-    app = QApplication.instance() or QApplication([])
-    from vision_station.ui import icons
-    png = path[:-4] + "_256.png"
-    icons.app_icon().pixmap(256, 256).save(png)
-    Image.open(png).save(path, sizes=[(s, s) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256)])
-    del app
+    """The application's icon (assets/icon, made by scripts/make_icon.py) as
+    the .exe's .ico -- every size drawn at its own size."""
+    import shutil
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import make_icon as mk
+    shutil.copyfile(mk.main(), path)
 
 
 def main(argv=None):

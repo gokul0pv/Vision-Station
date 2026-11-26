@@ -18,6 +18,8 @@ since Cognex's icons are their copyright.
 """
 import os
 
+from vision_station import paths
+
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 
@@ -349,7 +351,22 @@ def tool_icon(tool_type, ink=None):
     return _cache[key]
 
 
+APP_ICON_DIR = os.path.join(paths.ASSETS, "icon")
+
+
 def app_icon():
+    """The application's icon (assets/icon): the full drawing from 32 px up,
+    the lens alone below that. Windows, the taskbar, the .exe and the
+    shortcuts all show this one picture."""
     if "app" not in _cache:
-        _cache["app"] = _render(_svg(APP, INK, INK), sizes=(16, 24, 32, 48, 64, 128, 256))
+        big = os.path.join(APP_ICON_DIR, "vision_station.svg")
+        small = os.path.join(APP_ICON_DIR, "vision_station_small.svg")
+        if os.path.isfile(big) and os.path.isfile(small):
+            ic = QIcon()
+            for path, sizes in ((small, (16, 20, 24)), (big, (32, 40, 48, 64, 96, 128, 256))):
+                with open(path, encoding="utf-8") as f:
+                    _render(f.read(), sizes=sizes, ic=ic)
+            _cache["app"] = ic
+        else:
+            _cache["app"] = _render(_svg(APP, INK, INK), sizes=(16, 24, 32, 48, 64, 128, 256))
     return _cache["app"]

@@ -990,7 +990,8 @@ GEOMETRY_CHANGING = {"affine_transform", "polar_unwrap"}
 
 def apply_drawn_region(t, kind, geom):
     """A shape drawn on the image becomes a tool's region: a rectangle or an
-    ellipse by its box, unturned; a polygon by its points."""
+    ellipse by its box and its turn (the waiting area can be turned); a
+    polygon by its points."""
     if t is None:
         return
     p = t.setdefault("params", {})
@@ -1001,7 +1002,7 @@ def apply_drawn_region(t, kind, geom):
                  roi=[int(min(xs)), int(min(ys)), int(max(xs) - min(xs)), int(max(ys) - min(ys))])
     else:
         p.update(shape="ellipse" if kind == "ellipse" else "rect",
-                 roi=[int(v) for v in geom["roi"]], angle=0.0)
+                 roi=[int(v) for v in geom["roi"]], angle=float(geom.get("angle", 0.0) or 0.0))
         p.pop("points", None)
 FULL_FRAME_RECORDS = ("Reference", "Current.InputImage", "LastRun.InputImage",
                       "LastRun.OutputImage")
@@ -1829,9 +1830,10 @@ class ToolEditControl(QMainWindow):
             return
         from vision_station.tools import count as C
         x, y, w, h = t["params"]["roi"]
-        tpl = C._gray(p.reference[max(0, y):y + h, max(0, x):x + w])
+        ang = float(t["params"].get("angle", 0.0) or 0.0)
+        tpl = C.upright(p.reference, [x, y, w, h], ang)
         try:
-            ex = C.training_examples(p.folder, t["id"], [x, y, w, h], tpl)
+            ex = C.training_examples(p.folder, t["id"], [x, y, w, h], tpl, ang)
         except Exception:
             return
         alike = [e for e in ex if e[0] == "ng" and C._patch_sim(e[2], tpl) >= 0.97]
@@ -3202,15 +3204,30 @@ class JobEditor(QMainWindow):
         pen.setCosmetic(True)
         pen.setWidthF(2.0)
         pen.setStyle(Qt.DashLine)
+        geom = dict(geom)
         if kind == "polygon":
             item = sc.addPolygon(QPolygonF([QPointF(*p) for p in geom["points"]]), pen)
-        elif kind == "ellipse":
-            item = sc.addEllipse(QRectF(*geom["roi"]), pen)
+            item.setZValue(40)
         else:
-            item = sc.addRect(QRectF(*geom["roi"]), pen)
-        item.setZValue(40)
-        item.setToolTip("This area becomes the region of the next check you add")
-        self._pending_area = (kind, dict(geom), item)
+            # Adjustable while it waits for its check: drag to move, drag a
+            # grip to resize, drag just outside a corner to turn. It was a
+            # plain dashed outline -- a box drawn a little off could not be
+            # fixed before choosing the check, only drawn again.
+            from PySide6.QtGui import QBrush
+            from vision_station.ui.part_finder_panel import EditableBox
+
+            def changed(roi, angle):
+                geom["roi"] = [int(v) for v in roi]
+                geom["angle"] = float(angle or 0.0)
+            item = EditableBox(geom["roi"], on_change=changed, z=40,
+                               angle=float(geom.get("angle", 0.0) or 0.0),
+                               ellipse=(kind == "ellipse"), handles=True)
+            item.setPen(pen)
+            item.setBrush(QBrush(QColor(SEL.red(), SEL.green(), SEL.blue(), 26)))
+            sc.addItem(item)
+        item.setToolTip("This area becomes the region of the next check you add - drag it to "
+                        "move it, drag a grip to resize it, drag just outside a corner to turn it")
+        self._pending_area = (kind, geom, item)
 
     def _drop_pending_area(self):
         p = getattr(self, "_pending_area", None)
@@ -3659,52 +3676,6 @@ class PostedItemsDialog(QDialog):
 
 
 
-class ResultOutputDialog(QDialog):
-    """Where an exported job file puts each result."""
-
-    def __init__(self, parent, o):
-        super().__init__(parent)
-        from PySide6.QtWidgets import QCheckBox, QLineEdit
-        self.setWindowTitle("Result Output")
-        self.resize(540, 250)
-        self.folder = QLineEdit(o.get("folder", ""))
-        self.folder.setPlaceholderText("folder for annotated result images (empty = none)")
-        browse = QPushButton("Browse...")
-        browse.clicked.connect(self._browse)
-        self.show_cb = QCheckBox("Show each result in a window")
-        self.show_cb.setChecked(bool(o.get("show", True)))
-        self.fail_cb = QCheckBox("Only rejected parts")
-        self.fail_cb.setChecked(bool(o.get("only_failures", False)))
-        intro = QLabel("What an exported job file does with each result it produces.")
-        intro.setObjectName("hint")
-        intro.setWordWrap(True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 16, 18, 14)
-        lay.setSpacing(8)
-        lay.addWidget(intro)
-        lay.addSpacing(4)
-        lay.addWidget(QLabel("Save annotated result images to:"))
-        row = QHBoxLayout()
-        row.addWidget(self.folder, 1)
-        row.addWidget(browse)
-        lay.addLayout(row)
-        lay.addWidget(self.fail_cb)
-        lay.addSpacing(4)
-        lay.addWidget(self.show_cb)
-        lay.addStretch(1)
-        ok_cancel(self, lay)
-
-    def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "Result folder")
-        if d:
-            self.folder.setText(d)
-
-    def values(self):
-        return {"folder": self.folder.text().strip(), "show": self.show_cb.isChecked(),
-                "only_failures": self.fail_cb.isChecked()}
-
-
-
 class HistoryView(QWidget):
     """Production history from the results logs: yield per job, the checks
     rejecting parts most often, and the latest runs -- with CSV export."""
@@ -4068,9 +4039,27 @@ class DockTitle(QWidget):
         super().leaveEvent(e)
 
 
+def _card(widget):
+    """A dock's contents as a floating rounded card on the page, with a
+    little of the page round it -- the panels of Vision Glass. Only how it
+    is framed changes; the widget inside is the same one, doing the same."""
+    well = QWidget()
+    well.setObjectName("dockWell")
+    outer = QVBoxLayout(well)
+    outer.setContentsMargins(4, 4, 4, 4)
+    card = QFrame()
+    card.setObjectName("dockCard")
+    inner = QVBoxLayout(card)
+    inner.setContentsMargins(6, 6, 6, 6)
+    inner.addWidget(widget)
+    outer.addWidget(card)
+    well.content = widget
+    return well
+
+
 def _dock(title, name, owner, widget):
     d = _unique_name(QDockWidget(title, owner), name)
-    d.setWidget(widget)
+    d.setWidget(_card(widget))
     d.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
     d.setTitleBarWidget(DockTitle(d))
     return d
@@ -4450,7 +4439,7 @@ class QuickBuild(QMainWindow):
         self.mdi.setObjectName("workspace")
         self.mdi.setOption(QMdiArea.DontMaximizeSubWindowOnActivation, True)
         self.mdi.setActivationOrder(QMdiArea.ActivationHistoryOrder)
-        self.mdi.setBackground(QBrush(QColor(theme.color("bg_alt"))))
+        self.mdi.setBackground(QBrush(QColor(theme.color("bg"))))
         self.setCentralWidget(self.mdi)
         # The Run View: the verdict in words above the jobs' images.
         self.banner = simple.VerdictBanner()
@@ -6198,22 +6187,22 @@ class QuickBuild(QMainWindow):
 
     def result_output(self, folder=None, show=None, only_failures=None):
         """Where an exported job file puts its results: a folder of annotated
-        images, a window, or both -- taught here, saved with the application."""
+        images, a window, or both -- saved with the application. Set in
+        Settings > Results (File > Result Output opens it); called with no
+        values, it opens that page. It had a dialog of its own as well, the
+        same three settings twice."""
         spec, save = self._output_spec_holder()
         o = dict(spec.get("output") or {"folder": "results", "show": True,
                                         "only_failures": False})
         if folder is None and show is None and only_failures is None:
-            dlg = ResultOutputDialog(self, o)
-            if not dlg.exec():
-                return None
-            o = dlg.values()
-        else:
-            if folder is not None:
-                o["folder"] = folder
-            if show is not None:
-                o["show"] = bool(show)
-            if only_failures is not None:
-                o["only_failures"] = bool(only_failures)
+            self.show_settings("results")
+            return None
+        if folder is not None:
+            o["folder"] = folder
+        if show is not None:
+            o["show"] = bool(show)
+        if only_failures is not None:
+            o["only_failures"] = bool(only_failures)
         spec["output"] = o
         save()
         return o

@@ -1,0 +1,54 @@
+[package]
+name = "vision_next"
+version = "0.1.0"
+edition = "2021"
+description = "Vision Next: the Vision Station engine and interface in Rust, without Python"
+default-run = "vision-next"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vision-next"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "vs-run"
+path = "src/bin/vs_run.rs"
+
+[features]
+default = ["gui"]
+gui = ["dep:wry", "dep:tao", "dep:rfd", "dep:raw-window-handle"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
+rayon = "1"
+regex = "1"
+tiny_http = "0.12"
+libloading = "0.8"
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["load-dynamic", "directml"] }
+ort-sys = { version = "=2.0.0-rc.9", default-features = false }
+rxing = { version = "0.6", default-features = false }
+ab_glyph = "0.2"
+miniz_oxide = "0.8"
+rustfft = "6"
+wry = { version = "0.47", optional = true }
+tao = { version = "0.30", optional = true }
+rfd = { version = "0.15", default-features = false, optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "unwind"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

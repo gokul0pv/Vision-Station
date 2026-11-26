@@ -604,7 +604,49 @@ def find_similar(image, example, rect=None, min_score=0.70, turns=True, max_foun
     return out
 
 
-def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None, thresholds=None):
+def turned_area(image, rect, angle):
+    """(upright copy, back) of an area [x, y, w, h] turned by `angle` degrees
+    about its centre. Parts and text are found in the copy, upright to the
+    area; back(part) puts one into the picture -- the same size, turned with
+    the area (part["angle"]), so a row of parts at an angle gets boxes that
+    fit them instead of loose upright ones."""
+    import math
+    x, y, w, h = [float(v) for v in rect]
+    w, h = max(1, int(round(w))), max(1, int(round(h)))
+    a = math.radians(float(angle))
+    ca, sa = math.cos(a), math.sin(a)
+    cx, cy = x + w / 2.0, y + h / 2.0
+    M = np.float32([[ca, -sa, cx - ca * w / 2.0 + sa * h / 2.0],
+                    [sa, ca, cy - sa * w / 2.0 - ca * h / 2.0]])
+    crop = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                          borderMode=cv2.BORDER_REPLICATE)
+    signed = float(angle) % 360.0
+    signed = signed - 360.0 if signed > 180.0 else signed
+
+    def back(p):
+        bx, by, bw, bh = p["box"]
+        u, v = bx + bw / 2.0 - w / 2.0, by + bh / 2.0 - h / 2.0
+        px, py = cx + ca * u - sa * v, cy + sa * u + ca * v
+        q = dict(p)
+        q["box"] = [int(round(px - bw / 2.0)), int(round(py - bh / 2.0)), int(bw), int(bh)]
+        q["angle"] = round(signed, 2)
+        return q
+    return crop, back
+
+
+def _place(x, y, w, h, mx, my, angle, image_size):
+    """A check's region round a box, with margins: clipped to the picture
+    when upright (a turned one keeps its shape -- clipping it upright would
+    move its centre and so the turn)."""
+    x0, y0, x1, y1 = x - mx, y - my, x + w + mx, y + h + my
+    if image_size and not angle:
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(int(image_size[0]), x1), min(int(image_size[1]), y1)
+    return [x0, y0, x1 - x0, y1 - y0]
+
+
+def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None, thresholds=None,
+                   seated=False):
     """'Part present' check specs for the kept parts. names: type -> base
     name ('inductor'); ids are numbered per type and never collide with
     existing ones. The box gets a small margin of board round the part --
@@ -630,15 +672,16 @@ def presence_tools(parts, names, existing_ids, pad=0.08, image_size=None, thresh
         used.add(tid)
         x, y, w, h = p["box"]
         mx, my = int(round(w * pad)) + 2, int(round(h * pad)) + 2
-        x0, y0, x1, y1 = x - mx, y - my, x + w + mx, y + h + my
-        if image_size:
-            x0, y0 = max(0, x0), max(0, y0)
-            x1, y1 = min(int(image_size[0]), x1), min(int(image_size[1]), y1)
-        out.append({"id": tid, "type": "presence",
-                    "params": {"roi": [x0, y0, x1 - x0, y1 - y0],
-                               "min_score": round(float(thresholds.get(p["type"], 0.65)), 3),
-                               "search_pad": int(min(60, max(8, 0.15 * max(w, h)))),
-                               "group": base}})
+        ang = float(p.get("angle", 0.0) or 0.0)
+        params = {"roi": _place(x, y, w, h, mx, my, ang, image_size),
+                  "min_score": round(float(thresholds.get(p["type"], 0.65)), 3),
+                  "search_pad": int(min(60, max(8, 0.15 * max(w, h)))),
+                  "group": base}
+        if ang:
+            params["angle"] = ang
+        if seated:
+            params["check_seated"] = True
+        out.append({"id": tid, "type": "presence", "params": params})
     return out
 
 
@@ -680,14 +723,18 @@ def find_text(image, rect=None, progress=None):
             "device": ocr_engine.status().get("device") or ""}
 
 
-def read_box(image, box, margin=0.15):
+def read_box(image, box, margin=0.15, angle=0.0):
     """The text inside one box (with a little margin), as (text, confidence):
-    for a text box the user has just moved or resized."""
+    for a text box the user has just moved, resized or turned (read upright
+    to the box)."""
     from vision_station.tools import ocr_engine
     x, y, w, h = box
     m = int(round(max(w, h) * margin)) + 2
-    cx, cy, cw, ch = _clip(image, [x - m, y - m, w + 2 * m, h + 2 * m])
-    crop = image[cy:cy + ch, cx:cx + cw]
+    if angle:
+        crop, _back = turned_area(image, [x - m, y - m, w + 2 * m, h + 2 * m], angle)
+    else:
+        cx, cy, cw, ch = _clip(image, [x - m, y - m, w + 2 * m, h + 2 * m])
+        crop = image[cy:cy + ch, cx:cx + cw]
     if crop.size == 0:
         return "", 0.0
     lines = [ln for ln in (ocr_engine.read(crop) or []) if str(ln.get("text") or "").strip()]
@@ -725,12 +772,10 @@ def text_tools(items, kind, existing_ids, image_size=None, base="text", min_conf
         # whatever the text is printed on -- a wider one took in an
         # inductor's body and "R15" was read as "IR15".
         mx, my = int(round(0.15 * h)) + 2, int(round(0.22 * h)) + 2
-        x0, y0, x1, y1 = x - mx, y - my, x + w + mx, y + h + my
-        if image_size:
-            x0, y0 = max(0, x0), max(0, y0)
-            x1, y1 = min(int(image_size[0]), x1), min(int(image_size[1]), y1)
+        ang = float(it.get("angle", 0.0) or 0.0)
         params = dict(defaults(kind))
-        params["roi"] = [x0, y0, x1 - x0, y1 - y0]
+        params["roi"] = _place(x, y, w, h, mx, my, ang, image_size)
+        params["angle"] = ang
         params["group"] = name
         if min_confidence is not None:
             params["min_confidence"] = round(float(min_confidence), 3)

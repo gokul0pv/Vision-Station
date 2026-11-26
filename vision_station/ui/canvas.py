@@ -14,10 +14,10 @@ import math
 import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter,
+from PySide6.QtGui import (QBrush, QColor, QCursor, QFont, QFontMetricsF, QImage, QPainter,
                            QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPixmapItem, QGraphicsPolygonItem,
-                               QGraphicsRectItem, QGraphicsScene, QGraphicsView)
+                               QGraphicsRectItem, QGraphicsScene, QGraphicsView, QWidget)
 
 # Result colours come from core/annotate.py, so the screen, saved result
 # pictures and a line PC's pictures agree: blue OK, red NG, orange warnings.
@@ -477,6 +477,16 @@ class RegionItem(QGraphicsRectItem):
         pen.setStyle(Qt.SolidLine if (sel or hover or self.status) else Qt.DashLine)
         p.setPen(pen)
         alpha = 30 if sel else 22 if hover else 10
+        if sel:
+            # a soft glow round the selected region, so it stands out of a
+            # board full of outlines
+            p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 60), (width + 5.0) * s))
+            p.setBrush(Qt.NoBrush)
+            if self.region_shape == "ellipse":
+                p.drawEllipse(self.rect())
+            else:
+                p.drawRect(self.rect())
+            p.setPen(pen)
         p.setBrush(QBrush(QColor(col.red(), col.green(), col.blue(), alpha)))
         if self.region_shape == "ellipse":
             p.drawEllipse(self.rect())
@@ -1115,6 +1125,42 @@ class PolygonItem(QGraphicsPolygonItem):
         e.accept()
 
 
+class _RoundCorners(QWidget):
+    """The picture's corners, rounded: four small wedges in the page's
+    colour painted over the view's corners (a view cannot clip itself to a
+    rounded shape, and a mask would leave them jagged). Takes no clicks."""
+    RADIUS = 18
+
+    def __init__(self, view):
+        super().__init__(view)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, _e):
+        # the colour of what the picture sits on: a card, or the page
+        try:
+            from vision_station.ui import theme
+            key, w = "bg", self.parentWidget()
+            while w is not None:
+                if w.objectName() in ("tile", "dockCard", "card", "panel", "formGroup"):
+                    key = "layer"
+                    break
+                w = w.parentWidget()
+            col = QColor(theme.color(key))
+        except Exception:
+            return
+        r = QRectF(self.rect())
+        outer = QPainterPath()
+        outer.addRect(r)
+        inner = QPainterPath()
+        inner.addRoundedRect(r, self.RADIUS, self.RADIUS)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillPath(outer.subtracted(inner), col)
+        p.end()
+
+
 class ImageCanvas(QGraphicsView):
     geometryCommitted = Signal(str, list)
     liveGeometry = Signal(str, list)
@@ -1168,6 +1214,12 @@ class ImageCanvas(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        # The scene reaches most of a window beyond the image (_pad_scene), so
+        # the point under the pointer can stay under it while zooming at the
+        # image's edge -- and the scroll bars that range would show are off:
+        # the image is moved with the middle button, Space or the hand.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
         self.setFrameShape(QGraphicsView.NoFrame)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -1226,6 +1278,7 @@ class ImageCanvas(QGraphicsView):
         # result tags keep a readable size when zoomed far out: re-placed
         # whenever the zoom changes
         self.zoomChanged.connect(lambda _k: self._apply_captions())
+        self._corners = _RoundCorners(self)
 
     def set_chrome_margins(self, left, top, right, bottom):
         """Keep a band round the image for the display's toolbars, so they sit
@@ -1330,7 +1383,7 @@ class ImageCanvas(QGraphicsView):
         self.pix.setScale(1.0 / scale if scale else 1.0)
         self._pix_scale = scale
         self._scene_size = (w, h)
-        self.sc.setSceneRect(QRectF(0, 0, w, h))
+        self._pad_scene()
         if refit:
             self._fitting = True
             try:
@@ -1349,9 +1402,28 @@ class ImageCanvas(QGraphicsView):
         if need > self._pix_scale * 1.2 or need < self._pix_scale / 2.0:
             self.set_image(self._img, keep_view=True)
 
+    def _pad_scene(self):
+        """The scene: the image and, round it, 90 % of the window at the
+        current zoom. With the scene exactly the image, a view can never
+        scroll past the image's edge, so zooming with the pointer near an
+        edge -- or anywhere while the whole image fitted in the window --
+        could not keep that spot under the pointer: the picture slid away,
+        300-600 image pixels per wheel step."""
+        if self._scene_size is None:
+            return
+        w, h = self._scene_size
+        k = max(1e-6, self.transform().m11())
+        mx = 0.9 * max(1, self.viewport().width()) / k
+        my = 0.9 * max(1, self.viewport().height()) / k
+        r = QRectF(-mx, -my, w + 2 * mx, h + 2 * my)
+        if r != self.sc.sceneRect():
+            self.sc.setSceneRect(r)
+
     def fit(self):
         if not self.pix.pixmap().isNull():
             self.fitInView(self.pix, Qt.KeepAspectRatio)
+            self._pad_scene()
+            self.centerOn(self.pix)
             self.fitted = True
             self.fit_mode = True
             self._refresh_items()
@@ -1371,20 +1443,44 @@ class ImageCanvas(QGraphicsView):
         long_side = max(self._img.shape[1], self._img.shape[0])
         return self.MIN_ON_SCREEN / float(long_side), self.MAX_SCALE
 
-    def zoom(self, f, anchor="centre"):
-        """anchor 'mouse' follows the pointer, for the wheel. Everything else --
-        menu, keys, buttons -- anchors at the view centre: anchoring those under
-        the pointer moved the image away from wherever the operator was looking,
+    def zoom(self, f, anchor="centre", pos=None):
+        """anchor 'mouse' keeps the image point under the pointer where it is,
+        for the wheel; pos is the pointer in viewport pixels (the wheel
+        event's own position -- Qt's AnchorUnderMouse used the last mouse
+        MOVE it had seen, which the canvas's own move handling often skipped,
+        so the zoom went somewhere else). Everything else -- menu, keys,
+        buttons -- anchors at the view centre: anchoring those under the
+        pointer moved the image away from wherever the operator was looking,
         because the pointer was on a menu at the time."""
         lo, hi = self.scale_limits()
         cur = self.transform().m11()
         f = max(lo / cur, min(hi / cur, f))
         if abs(f - 1.0) < 1e-6:
             return
+        vp = self.viewport().rect()
+        if anchor == "mouse":
+            if pos is None:
+                pos = getattr(self, "_last_mouse", None) or                     self.viewport().mapFromGlobal(QCursor.pos())
+            pos = QPointF(pos)
+            if not QRectF(vp).contains(pos):
+                pos = QPointF(vp.center())
+        else:
+            pos = QPointF(vp.center())
+        at = self.mapToScene(pos.toPoint())
+        at = QPointF(at.x() + (pos.x() - pos.toPoint().x()) / cur,
+                     at.y() + (pos.y() - pos.toPoint().y()) / cur)
         old = self.transformationAnchor()
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse if anchor == "mouse"
-                                     else QGraphicsView.AnchorViewCenter)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.scale(f, f)
+        self._pad_scene()
+        # put that image point back under the pointer: scroll by how far, in
+        # screen pixels, it now lies from the pointer
+        t = self.transform()
+        now = QPointF(t.m11() * at.x() + t.dx() - self.horizontalScrollBar().value(),
+                      t.m22() * at.y() + t.dy() - self.verticalScrollBar().value())
+        for bar, d in ((self.horizontalScrollBar(), now.x() - pos.x()),
+                       (self.verticalScrollBar(), now.y() - pos.y())):
+            bar.setValue(bar.value() + int(round(d)))
         self.setTransformationAnchor(old)
         self.fit_mode = False
         self._refresh_items()
@@ -1393,7 +1489,10 @@ class ImageCanvas(QGraphicsView):
 
     def zoom_100(self):
         self.fit_mode = False
+        centre = self.mapToScene(self.viewport().rect().center())
         self.resetTransform()
+        self._pad_scene()
+        self.centerOn(centre)
         self._refresh_items()
         self.zoomChanged.emit(self.transform().m11())
         self.refresh_detail()
@@ -1406,6 +1505,8 @@ class ImageCanvas(QGraphicsView):
         for it in items[1:]:
             r = r.united(it.sceneBoundingRect())
         self.fitInView(r.adjusted(-40, -40, 40, 40), Qt.KeepAspectRatio)
+        self._pad_scene()
+        self.centerOn(r.center())
         self.fit_mode = False
         self._refresh_items()
         self.zoomChanged.emit(self.transform().m11())
@@ -2140,19 +2241,46 @@ class ImageCanvas(QGraphicsView):
                 pen.setCosmetic(True)
                 self._poly_preview = self.sc.addPolygon(QPolygonF(), pen)
                 self._poly_preview.setZValue(70)
+                self._start_ants()
             self._poly_preview.setPolygon(
                 QPolygonF([QPointF(*v) for v in self._poly_pending]))
             return True
         if e.button() == Qt.LeftButton:
             self._draft_origin = p
-            pen = QPen(SEL, 0, Qt.DashLine)
+            pen = QPen(SEL, 1.6, Qt.DashLine)
             pen.setCosmetic(True)
-            self._draft = (self.sc.addEllipse(QRectF(p, p), pen)
+            self._draft = (self.sc.addEllipse(QRectF(p, p), pen, QBrush(QColor(124, 92, 255, 30)))
                            if self.mode == "draw_ellipse"
-                           else self.sc.addRect(QRectF(p, p), pen))
+                           else self.sc.addRect(QRectF(p, p), pen, QBrush(QColor(124, 92, 255, 30))))
             self._draft.setZValue(70)
+            self._start_ants()
             return True
         return False
+
+    def _start_ants(self):
+        """Marching ants: the dashes of a box being drawn run round it, as
+        in every drawing program -- a still dashed line read as a region
+        already made. Stops by itself once nothing is being drawn."""
+        from PySide6.QtCore import QTimer
+        t = getattr(self, "_ants", None)
+        if t is None:
+            t = self._ants = QTimer(self)
+            t.setInterval(60)
+            t.timeout.connect(self._march)
+            self._ants_off = 0.0
+        if not t.isActive():
+            t.start()
+
+    def _march(self):
+        items = [i for i in (self._draft, self._poly_preview) if i is not None]
+        if not items:
+            self._ants.stop()
+            return
+        self._ants_off = (self._ants_off - 1.0) % 64.0
+        for it in items:
+            pen = it.pen()
+            pen.setDashOffset(self._ants_off)
+            it.setPen(pen)
 
     def undo_last_point(self):
         """Remove the most recently placed vertex of a trace in progress."""
@@ -2207,11 +2335,13 @@ class ImageCanvas(QGraphicsView):
                 pen.setCosmetic(True)
                 self._draft = self.sc.addRect(QRectF(p, p), pen)
                 self._draft.setZValue(60)
+                self._start_ants()
                 e.accept()
                 return
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
+        self._last_mouse = QPointF(e.position())
         if self._draft is not None:
             p = self.mapToScene(e.position().toPoint())
             rect = QRectF(self._draft_origin, p).normalized()
@@ -2277,6 +2407,9 @@ class ImageCanvas(QGraphicsView):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self._corners.setGeometry(self.rect())
+        self._corners.raise_()
+        self._pad_scene()
         if self.fit_mode and self._img is not None:
             self.fit()
 
@@ -2319,5 +2452,11 @@ class ImageCanvas(QGraphicsView):
         return x, y, "%d" % int(v[0])
 
     def wheelEvent(self, e):
-        self.zoom(1.16 if e.angleDelta().y() > 0 else 1 / 1.16, anchor="mouse")
+        dy = e.angleDelta().y() or e.angleDelta().x()
+        if not dy:
+            e.accept()
+            return
+        # a precise touchpad sends small steps: zoom by as much as it scrolled
+        steps = max(-4.0, min(4.0, dy / 120.0))
+        self.zoom(1.16 ** steps, anchor="mouse", pos=e.position())
         e.accept()

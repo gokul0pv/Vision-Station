@@ -165,6 +165,8 @@ class ToolEditor(QMainWindow):
             cx = min(max(cx, w / 2), iw - w / 2)
             cy = min(max(cy, h / 2), ih - h / 2)
         self.canvas.fitInView(QRectF(cx - w / 2, cy - h / 2, w, h), Qt.KeepAspectRatio)
+        self.canvas._pad_scene()
+        self.canvas.centerOn(cx, cy)
         lo, hi = self.canvas.scale_limits()
         k = self.canvas.transform().m11()
         if k > hi or k < lo:

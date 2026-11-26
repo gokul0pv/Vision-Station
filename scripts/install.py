@@ -175,7 +175,15 @@ def main(argv=None):
             preflight.main()
         except Exception as e:
             print("  Could not run the preflight check: %s" % e)
-    print("\n  Start with:  run.bat   (or: python -m vision_station)")
+    if not a.dry_run:
+        # the application's icon on the desktop and in the Start menu
+        try:
+            import make_shortcuts
+            make_shortcuts.make()
+        except Exception as e:
+            print("  Shortcuts were not made: %s" % e)
+    print("\n  Start with:  run.bat   (or: python -m vision_station),")
+    print("  or the Vision Station icon on the desktop.")
     return 0
 
 

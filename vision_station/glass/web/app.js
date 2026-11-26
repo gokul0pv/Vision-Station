@@ -108,31 +108,49 @@ function render() { renderChrome(); renderView(); }
 function renderChrome() {
   const st = S.st;
   $('#appName').textContent = (st.apps.find(a => a.id === st.app) || {}).name || 'No application';
-  const nav = $('#nav'); nav.innerHTML = '';
-  for (const [v, ic, txt] of [['run', 'gauge', 'Run'], ['build', 'hammer', 'Build'], ['history', 'clock', 'History']])
-    nav.append(h('div', { class: 'nav-item' + (S.view === v ? ' on' : ''), html: icon(ic) + `<span>${txt}</span>`,
-                          onclick: () => { S.view = v; render(); } }));
+  const nav = $('#nav');
+  const views = [['run', 'gauge', 'Run'], ['build', 'hammer', 'Build'], ['history', 'clock', 'History']];
+  if (!nav.querySelector('.nav-glider')) {
+    // built once, so the highlight can spring from one item to the next
+    nav.innerHTML = '';
+    nav.append(h('div', { class: 'nav-glider' }));
+    for (const [v, ic, txt] of views)
+      nav.append(h('div', { class: 'nav-item', 'data-v': v, html: icon(ic) + `<span>${txt}</span>`,
+                            onclick: () => { S.view = v; render(); } }));
+  }
+  const items = $$('.nav-item', nav);
+  items.forEach(it => it.classList.toggle('on', it.dataset.v === S.view));
+  const on = items.find(it => it.dataset.v === S.view);
+  if (on) nav.querySelector('.nav-glider').style.transform = `translateY(${on.offsetTop}px)`;
   const jl = $('#jobList'); jl.innerHTML = '';
   for (const j of st.jobs) {
     const r = S.results[j.pid];
     const cls = r ? (r.verdict === 'PASS' ? 'pass' : 'fail') : '';
-    jl.append(h('div', { class: 'job-item' + (S.view === 'build' && j.pid === S.pid ? ' nav-item on' : ''),
+    jl.append(h('div', { class: 'job-item' + (S.view === 'build' && j.pid === S.pid ? ' on' : ''),
       html: `<span class="dot ${cls}"></span><span>${esc(j.name)}</span><span class="v">${r ? (r.verdict === 'PASS' ? 'Accept' : 'Reject') : ''}</span>`,
       onclick: () => { S.pid = j.pid; S.sel = null; S.cv.fitted = false; S.view = 'build'; render(); } }));
   }
-  $('#viewTitle').textContent = { run: 'Run', build: 'Build  ·  ' + (job()?.name || ''), history: 'History' }[S.view];
+  $('#viewTitle').innerHTML = S.view === 'build'
+    ? `Build <span class="crumb">/ ${esc(job()?.name || '')}</span>`
+    : { run: 'Run', history: 'History' }[S.view];
   const c = st.counts, tot = c.accept + c.reject;
   const last = Object.values(S.results).sort((a, b) => b.seq - a.seq)[0];
   $('#kpis').innerHTML = [
     ['Accepted', c.accept, c.accept ? 'pass' : ''], ['Rejected', c.reject, c.reject ? 'fail' : ''],
     ['Yield', tot ? (100 * c.accept / tot).toFixed(1) + '%' : '–', ''],
     ['Last cycle', last ? Math.round(last.total_ms) + ' ms' : '–', '']]
-    .map(([k, v, cls]) => `<div class="kpi"><div class="cap">${k}</div><div class="num ${cls}">${v}</div></div>`).join('');
+    .map(([k, v, cls]) => `<div class="kpi"><div class="cap">${k}</div><div class="num ${cls}${
+      S.kpiWas && S.kpiWas[k] !== undefined && S.kpiWas[k] !== v ? ' bump' : ''}">${v}</div></div>`).join('');
+  S.kpiWas = { Accepted: c.accept, Rejected: c.reject };
   $('#contSwitch').set(st.continuous);
 }
 
 function renderView() {
   const v = $('#view'); v.innerHTML = '';
+  if (S.shown !== S.view) {
+    S.shown = S.view;
+    v.classList.remove('view-enter'); void v.offsetWidth; v.classList.add('view-enter');
+  }
   if (!S.st.jobs.length) {
     v.append(h('div', { class: 'empty glass panel', html:
       '<div><b>No application open</b><br>Open one from the sidebar - Vision Station\'s projects are here too.</div>' }));
@@ -228,12 +246,26 @@ function renderRun() {
   const verdict = !res.length ? 'idle' : res.every(r => r.verdict === 'PASS') ? 'pass' : 'fail';
   const fails = res.flatMap(r => r.tools.filter(t => t.status !== 'pass')
                                        .map(t => `${t.tool_id}: ${t.message || t.status}`));
-  main.append(h('div', { class: `verdict glass panel ${verdict}` },
-    h('div', { class: 'orb' }),
-    h('div', {}, h('div', { class: 'word' }, { idle: 'Ready', pass: 'Accept', fail: 'Reject' }[verdict]),
+  const c = st.counts, tot = c.accept + c.reject, yieldP = tot ? c.accept / tot : 0;
+  const seqNow = Math.max(0, ...res.map(r => r.seq || 0));
+  const fresh = seqNow !== S.verdictSeq; S.verdictSeq = seqNow;
+  const R = 33, L = 2 * Math.PI * R;
+  const orb = h('div', { class: 'orb', html:
+    `<svg class="ring" viewBox="0 0 76 76"><circle class="track" cx="38" cy="38" r="${R}"/>` +
+    `<circle class="arc" cx="38" cy="38" r="${R}" stroke-dasharray="${L}" stroke-dashoffset="${L}"/></svg>` +
+    `<div class="glyph">${icon(verdict === 'pass' ? 'check' : verdict === 'fail' ? 'close' : 'run')}</div>` });
+  // the arc grows to the yield after it is on the page, so it is seen moving
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const a = orb.querySelector('.arc'); if (a) a.style.strokeDashoffset = String(L * (1 - yieldP)); }));
+  main.append(h('div', { class: `verdict glass panel ${verdict}${fresh && res.length ? ' fresh' : ''}` },
+    orb,
+    h('div', { class: 'grow', style: { minWidth: 0 } },
+      h('div', { class: 'word' }, { idle: 'Ready', pass: 'Accept', fail: 'Reject' }[verdict]),
       h('div', { class: 'why' }, verdict === 'idle' ? 'Press Run to inspect a part - or switch Continuous on.' :
         verdict === 'pass' ? 'Every check passed.' : fails.slice(0, 3).join('  ·  ') +
-        (fails.length > 3 ? `  ·  +${fails.length - 3} more` : '')))));
+        (fails.length > 3 ? `  ·  +${fails.length - 3} more` : ''))),
+    h('div', { class: 'yield' }, h('b', {}, tot ? (100 * yieldP).toFixed(1) + '%' : '–'),
+      h('span', {}, tot ? `yield · ${tot} part${tot === 1 ? '' : 's'}` : 'yield'))));
   if (st.barcode.enabled) main.append(barcodeBar());
   // a tile per job
   const tiles = h('div', { class: 'tiles', style: { gridTemplateColumns: `repeat(${st.jobs.length > 1 ? 2 : 1}, minmax(0,1fr))` } });
@@ -246,10 +278,10 @@ function renderRun() {
   api('/api/history').then(hist => {
     S.history = hist;
     if (!hist.length) rows.append(h('div', { class: 'faint', style: { padding: '8px 10px' } }, 'No parts inspected yet'));
-    for (const e of hist.slice(0, 40)) rows.append(h('div', { class: 'qrow' },
+    hist.slice(0, 40).forEach((e, i) => rows.append(h('div', { class: 'qrow', style: { '--i': i } },
       h('span', { class: 't' }, e.time), h('span', {}, e.barcode ? `${e.job}  ·  ${e.barcode}` : e.job),
       h('span', { class: 'badge ' + (e.verdict === 'PASS' ? 'pass' : 'fail') }, e.verdict === 'PASS' ? 'OK' : 'NG'),
-      e.failed.length ? h('span', { class: 'f' }, e.failed.join(', ')) : null));
+      e.failed.length ? h('span', { class: 'f' }, e.failed.join(', ')) : null)));
   });
   q.append(rows);
   wrap.append(q);
@@ -322,17 +354,17 @@ function renderBuild() {
                               ['rect', 'rect', 'Draw a box  (R)'], ['ellipse', 'ellipse', 'Draw an ellipse  (E)']])
     rail.append(h('button', { class: 'glass-btn icon' + (S.cv.mode === m ? ' on' : ''), title: tip, html: icon(ic),
                               onclick: () => setMode(m) }));
-  rail.append(h('div', { style: { height: '1px', background: 'var(--hair)', margin: '4px 6px' } }));
+  rail.append(h('div', { class: 'rail-sep' }));
   rail.append(h('button', { class: 'glass-btn icon' + (S.finder ? ' on' : ''), title: 'Find parts / text (AI)', html: icon('sparkle'),
                             onclick: () => { S.finder = S.finder ? null : { mode: 'parts', items: [], area: null, names: {}, thr: {} }; renderBuild(); } }));
   rail.append(h('button', { class: 'glass-btn icon', title: 'Undo  (Ctrl+Z)', html: icon('undo'), onclick: undo }));
   cw.append(rail);
   // zoom
   const zb = h('div', { class: 'float zoombar glass lens' },
-    h('button', { class: 'glass-btn icon ghost', html: icon('zoomout'), onclick: () => zoomBy(0.8) }),
+    h('button', { class: 'glass-btn icon ghost', html: icon('zoomout'), title: 'Zoom out', onclick: () => glide(() => zoomBy(0.8)) }),
     h('span', { class: 'z', id: 'zoomLabel' }, ''),
-    h('button', { class: 'glass-btn icon ghost', html: icon('zoomin'), onclick: () => zoomBy(1.25) }),
-    h('button', { class: 'glass-btn icon ghost', html: icon('fit'), title: 'Fit', onclick: () => { S.cv.fitted = false; fitCanvas(); } }));
+    h('button', { class: 'glass-btn icon ghost', html: icon('zoomin'), title: 'Zoom in', onclick: () => glide(() => zoomBy(1.25)) }),
+    h('button', { class: 'glass-btn icon ghost', html: icon('fit'), title: 'Fit  (F)', onclick: () => glide(() => { S.cv.fitted = false; fitCanvas(); }) }));
   cw.append(zb);
   if (S.armed) cw.append(h('div', { class: 'float note glass lens' },
     h('span', {}, `Drag on the picture where the ${label(S.armed)} check goes`),
@@ -364,6 +396,13 @@ function applyView() {
     S.cv.full = true; img.src = `/img/reference/${j.pid}.jpg?w=99999&v=${S.refVer}`;
   }
   drawOverlay();
+}
+/** A view change from a button or key, animated on a spring. The wheel and
+    dragging stay immediate: the picture must be where the hand is. */
+function glide(fn) {
+  const w = $('#world');
+  if (w) { w.classList.add('glide'); clearTimeout(glide.t); glide.t = setTimeout(() => w.classList.remove('glide'), 600); }
+  fn();
 }
 function zoomBy(f, cx, cy) {
   const c = $('#canvas');
@@ -408,6 +447,7 @@ function drawOverlay() {
     shape.setAttribute('fill', sel ? 'rgba(167,139,250,.14)' : 'rgba(255,255,255,0.001)');
     shape.setAttribute('stroke', col);
     shape.setAttribute('stroke-width', (sel ? 2.4 : 2) / px);
+    if (sel) shape.setAttribute('class', 'region-sel');
     if (!r && !sel) shape.setAttribute('stroke-dasharray', `${6 / px} ${4 / px}`);
     if (p.enabled === false) shape.setAttribute('opacity', '.4');
     g.append(shape);
@@ -420,8 +460,8 @@ function drawOverlay() {
       svg.append(tag(x, y, r.caption, col === 'var(--sel)' ? (COL[r.status] || 'var(--ok)') : col, 18 / px, taken));
     if (sel && p.shape !== 'polygon' && !p.angle) {
       for (const [hx, hy, k] of handles(x, y, w, hh)) {
-        const hd = svgEl('circle', { cx: hx, cy: hy, r: 6 / px, class: 'handle', 'data-h': k,
-                                     'stroke-width': 2 / px, style: `cursor:${k}-resize` });
+        const hd = svgEl('circle', { cx: hx, cy: hy, r: 5.5 / px, class: 'handle', 'data-h': k,
+                                     'stroke-width': 2.2 / px, style: `cursor:${k}-resize` });
         svg.append(hd);
       }
       svg.append(tag(x, y + hh + 26 / px, [`${Math.round(w)} × ${Math.round(hh)}`], 'var(--sel)', 16 / px, []));
@@ -432,11 +472,26 @@ function drawOverlay() {
     const el = S.cv.mode === 'ellipse'
       ? svgEl('ellipse', { cx: d[0] + d[2] / 2, cy: d[1] + d[3] / 2, rx: d[2] / 2, ry: d[3] / 2 })
       : svgEl('rect', { x: d[0], y: d[1], width: d[2], height: d[3], rx: 3 / px });
-    el.setAttribute('fill', 'rgba(167,139,250,.16)'); el.setAttribute('stroke', 'var(--sel)');
-    el.setAttribute('stroke-width', 2 / px); el.setAttribute('stroke-dasharray', `${6 / px} ${4 / px}`);
+    el.setAttribute('fill', 'color-mix(in srgb, var(--sel) 14%, transparent)'); el.setAttribute('stroke', 'var(--sel)');
+    el.setAttribute('stroke-width', 2 / px); el.setAttribute('stroke-dasharray', `${7 / px} ${5 / px}`);
+    ants(el, px);
     svg.append(el);
   }
   if (S.finder) drawFinder(svg, px);
+}
+/** Marching ants on a selection outline: the dash runs round it; redrawn
+    shapes pick the march up where it was. */
+function ants(el, px) {
+  el.classList.add('ants');
+  el.style.setProperty('--ants', String(-12 / px));
+  el.style.animationDelay = `-${performance.now() % 600}ms`;
+}
+function sizeChip(e, w, hh) {
+  const c = $('#sizeChip'); if (!c) return;
+  if (!e) { c.classList.remove('on'); return; }
+  c.textContent = `${Math.round(w)} × ${Math.round(hh)}`;
+  c.style.left = (e.clientX + 18) + 'px'; c.style.top = (e.clientY + 18) + 'px';
+  c.classList.add('on');
 }
 function handles(x, y, w, hh) {
   return [[x, y, 'nw'], [x + w / 2, y, 'n'], [x + w, y, 'ne'], [x + w, y + hh / 2, 'e'],
@@ -456,6 +511,7 @@ function bindCanvas(c) {
     const hEl = e.target.closest('[data-h]'), gEl = e.target.closest('[data-id]');
     if (e.button === 1 || S.cv.mode === 'pan' || S.space) {
       S.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, x: S.cv.x, y: S.cv.y };
+      grabbing(true);
     } else if (S.finder && S.finder.drawing) {
       S.drag = { kind: 'draw', p0: p }; S.draft = [p[0], p[1], 0, 0];
     } else if (S.cv.mode === 'rect' || S.cv.mode === 'ellipse') {
@@ -473,6 +529,7 @@ function bindCanvas(c) {
     } else {
       if (S.sel) { S.sel = null; renderInspector(); drawOverlay(); }
       S.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, x: S.cv.x, y: S.cv.y };
+      grabbing(true);
     }
   });
   window.onmousemove = e => {
@@ -483,6 +540,7 @@ function bindCanvas(c) {
       let w = p[0] - d.p0[0], hh = p[1] - d.p0[1];
       if (e.shiftKey) { const m = Math.max(Math.abs(w), Math.abs(hh)); w = Math.sign(w || 1) * m; hh = Math.sign(hh || 1) * m; }
       S.draft = [Math.min(d.p0[0], d.p0[0] + w), Math.min(d.p0[1], d.p0[1] + hh), Math.abs(w), Math.abs(hh)];
+      sizeChip(e, Math.abs(w), Math.abs(hh));
       drawOverlay(); return;
     }
     const t = toolsOf(job()).find(t => t.id === S.sel); if (!t) return;
@@ -495,16 +553,20 @@ function bindCanvas(c) {
       if (d.h.includes('n')) { y += dy; hh -= dy; } if (d.h.includes('s')) hh += dy;
       if (w < 4) { w = 4; } if (hh < 4) { hh = 4; }
       t.params.roi = [Math.round(x), Math.round(y), Math.round(w), Math.round(hh)];
+      sizeChip(e, w, hh);
     }
     d.moved = true;
     drawOverlay();
   };
   window.onmouseup = async e => {
-    const d = S.drag; S.drag = null; if (!d) return;
+    const d = S.drag; S.drag = null;
+    sizeChip(null); grabbing(false);
+    if (!d) return;
     if (d.kind === 'draw') {
       const box = S.draft; S.draft = null; drawOverlay();
       if (!box || box[2] < 6 || box[3] < 6) return;
-      if (S.finder && S.finder.drawing) { S.finder.area = box.map(Math.round); S.finder.drawing = false; renderBuild(); return; }
+      if (S.finder && S.finder.drawing) { S.finder.area = box.map(Math.round); S.finder.drawing = false;
+                                          delete document.documentElement.dataset.ptr; renderBuild(); return; }
       const shape = S.cv.mode === 'ellipse' ? 'ellipse' : 'rect';
       if (S.armed) { const ty = S.armed; S.armed = null; S.cv.mode = 'select'; return addCheck(ty, box, shape); }
       return offerChecks(e.clientX, e.clientY, box, shape);
@@ -520,6 +582,13 @@ function bindCanvas(c) {
   };
 }
 
+/** The pointer's hand closes while the picture is being moved. */
+function grabbing(on) {
+  if (on) document.documentElement.dataset.ptr = 'grabbing';
+  else if (document.documentElement.dataset.ptr === 'grabbing') delete document.documentElement.dataset.ptr;
+  $('#canvas')?.classList.toggle('panning', !!on);
+  if (typeof Pointer !== 'undefined') Pointer.refresh();
+}
 function offerChecks(x, y, box, shape) {
   const items = [{ section: 'Add a check on this area' }];
   for (const ty of QUICK.slice(0, 8)) items.push({ label: label(ty), icon: TOOL_ICON[ty] || 'ok',
@@ -699,7 +768,8 @@ function finderPanel() {
     F.mode, m => { F.mode = m; F.items = []; renderBuild(); }));
   p.append(h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
     h('span', { class: 'muted grow' }, F.area ? `Area ${F.area[2]} × ${F.area[3]}` : 'Area: the whole picture'),
-    h('button', { class: 'glass-btn small', onclick: () => { F.drawing = true; toast('Drag a box round the area to search'); } }, 'Draw area'),
+    h('button', { class: 'glass-btn small', onclick: () => { F.drawing = true; document.documentElement.dataset.ptr = 'draw';
+                                                                 toast('Drag a box round the area to search'); } }, 'Draw area'),
     F.area ? h('button', { class: 'glass-btn small ghost', onclick: () => { F.area = null; renderBuild(); } }, 'Whole') : null));
   const findBtn = h('button', { class: 'glass-btn prominent wide', html: icon('sparkle') + (F.mode === 'parts' ? 'Find parts' : 'Find text') });
   findBtn.onclick = async () => {
@@ -749,14 +819,16 @@ function drawFinder(svg, px) {
   const F = S.finder;
   if (F.area) {
     const a = F.area;
-    svg.append(svgEl('rect', { x: a[0], y: a[1], width: a[2], height: a[3], fill: 'none', stroke: '#fff',
-                               'stroke-width': 1.5 / px, 'stroke-dasharray': `${8 / px} ${5 / px}` }));
+    const ar = svgEl('rect', { x: a[0], y: a[1], width: a[2], height: a[3], rx: 6 / px, fill: 'rgba(255,255,255,.04)', stroke: '#fff',
+                               'stroke-width': 1.6 / px, 'stroke-dasharray': `${8 / px} ${6 / px}` });
+    ants(ar, px);
+    svg.append(ar);
   }
   const hues = [200, 30, 280, 140, 340, 60, 170, 0, 230, 100];
   F.items.forEach((it, i) => {
     const hue = F.mode === 'parts' ? hues[it.type % hues.length] : 140;
     const [x, y, w, hh] = it.box;
-    const r = svgEl('rect', { x, y, width: w, height: hh, rx: 3 / px, class: 'fbox',
+    const r = svgEl('rect', { x, y, width: w, height: hh, rx: 4 / px, class: 'fbox',
       fill: it.keep ? `hsla(${hue},90%,60%,.16)` : 'none', stroke: `hsl(${hue},90%,${it.keep ? 62 : 40}%)`,
       'stroke-width': 2 / px, style: 'cursor:pointer' });
     if (!it.keep) r.setAttribute('stroke-dasharray', `${4 / px} ${4 / px}`);
@@ -831,8 +903,10 @@ function openSettings(tab) {
     } else {
       const theme = localStorage.getItem('vg-theme') || 'auto';
       pane.append(formRow('Appearance', null, segmented([{ value: 'auto', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], theme, applyTheme)),
-        formRow('Reduce transparency', 'Solid panels instead of glass - easier to read on a busy wallpaper, lighter on the graphics card',
-          glassSwitch(document.documentElement.classList.contains('flat'), v => { document.documentElement.classList.toggle('flat', v); localStorage.setItem('vg-flat', v ? '1' : '0'); })));
+        formRow('Reduce transparency', 'Solid panels instead of frosted ones - lighter on the graphics card',
+          glassSwitch(document.documentElement.classList.contains('flat'), v => { document.documentElement.classList.toggle('flat', v); localStorage.setItem('vg-flat', v ? '1' : '0'); })),
+        formRow('Fluid pointer', 'A pointer that wraps buttons and turns into a crosshair, hand or arrow on the picture. Off: the Windows arrow',
+          glassSwitch(localStorage.getItem('vg-pointer') !== '0', v => { localStorage.setItem('vg-pointer', v ? '1' : '0'); Pointer.apply(); })));
       save = async () => true;
     }
   }
@@ -843,7 +917,7 @@ function openSettings(tab) {
 
 // ================================================================ running and keys
 async function runNow() {
-  const btn = $('#runBtn'); btn.disabled = true;
+  const btn = $('#runBtn'); btn.disabled = true; btn.classList.add('busy');
   try {
     const r = await api('/api/run', S.view === 'build' ? { pid: job().pid } : {});
     if (r.need_barcode) toast('Scan the part\'s barcode first', 'warn');
@@ -859,7 +933,7 @@ async function runNow() {
     }
     await poll();
   } catch (e) { toast(e.message, 'fail'); }
-  btn.disabled = false;
+  btn.disabled = false; btn.classList.remove('busy');
 }
 function onKey(e) {
   const typing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName);
@@ -874,10 +948,11 @@ function onKey(e) {
   const k = e.key.toLowerCase();
   if (k === 'v') setMode('select'); else if (k === 'h') setMode('pan');
   else if (k === 'r') setMode('rect'); else if (k === 'e') setMode('ellipse');
-  else if (e.key === 'Escape') { S.armed = null; S.draft = null; if (S.finder?.drawing) S.finder.drawing = false; setMode('select'); }
+  else if (e.key === 'Escape') { S.armed = null; S.draft = null; if (S.finder?.drawing) S.finder.drawing = false;
+                                 delete document.documentElement.dataset.ptr; setMode('select'); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel) {
     api('/api/tool/delete', { pid: job().pid, ids: [S.sel] }).then(async () => { toast(`Deleted ${S.sel} - Ctrl+Z brings it back`); S.sel = null; await afterEdit(); });
-  } else if (k === 'f') { S.cv.fitted = false; fitCanvas(); }
+  } else if (k === 'f') glide(() => { S.cv.fitted = false; fitCanvas(); });
 }
 window.addEventListener('keyup', e => { if (e.key === ' ') S.space = false; });
 

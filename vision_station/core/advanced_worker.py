@@ -61,6 +61,16 @@ def main():
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--patience", type=int, default=12)
     ap.add_argument("--device", default="0")
+    # Picture loading, not the graphics card, was the brake: 2 loader
+    # processes decoding 1280 px PNG tiles and making mosaics kept an RTX 5060
+    # waiting. More loaders (the PC's cores, less some for the application),
+    # the tiles decoded once and kept in memory when it has room (Ultralytics
+    # checks and falls back to reading them), and the deterministic mode --
+    # which forbids the card's fastest algorithms -- off. The seed still
+    # fixes the data order and augmentation.
+    ap.add_argument("--workers", type=int,
+                    default=max(2, min(8, (os.cpu_count() or 4) - 4)))
+    ap.add_argument("--cache", default="ram", choices=["ram", "disk", "none"])
     a = ap.parse_args()
     t0 = time.time()
     try:
@@ -112,11 +122,12 @@ def main():
     try:
         model.train(data=a.data, imgsz=a.imgsz, epochs=a.epochs, batch=a.batch,
                     device=a.device if a.device == "cpu" else int(a.device),
-                    workers=2, project=os.path.abspath(a.out), name="train", exist_ok=True,
+                    workers=a.workers, cache=False if a.cache == "none" else a.cache,
+                    project=os.path.abspath(a.out), name="train", exist_ok=True,
                     patience=a.patience, fliplr=0.0, mosaic=0.5, degrees=2.0,
                     translate=0.05, scale=0.2, hsv_v=0.3, hsv_s=0.4,
                     close_mosaic=max(1, min(10, a.epochs // 3)), seed=0,
-                    deterministic=True, verbose=False, plots=False, amp=True)
+                    deterministic=False, verbose=False, plots=False, amp=True)
         tr = model.trainer
         best = os.path.join(str(tr.save_dir), "weights", "best.pt")
         if not os.path.isfile(best):

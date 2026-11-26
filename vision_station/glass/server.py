@@ -42,6 +42,7 @@ from vision_station import paths
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 FONTS = os.path.join(paths.ASSETS, "fonts")
+ICONS = os.path.join(paths.ASSETS, "icon")
 HISTORY_LEN = 60
 
 
@@ -496,6 +497,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(os.path.join(WEB, u.path[5:]))
             if u.path.startswith("/fonts/"):
                 return self._file(os.path.join(FONTS, os.path.basename(u.path)), cache=True)
+            if u.path.startswith("/icon/") or u.path == "/favicon.ico":
+                # the application's icon (assets/icon): tab, sidebar mark
+                name = "vision_station.ico" if u.path == "/favicon.ico" else                     os.path.basename(u.path)
+                return self._file(os.path.join(ICONS, name), cache=True)
             if u.path == "/api/state":
                 return self._send(200, st.state())
             if u.path == "/api/results":
@@ -560,12 +565,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _file(self, path, cache=False):
         path = os.path.abspath(path)
-        if not (path.startswith(os.path.abspath(WEB)) or path.startswith(os.path.abspath(FONTS))) \
+        if not any(path.startswith(os.path.abspath(d) + os.sep) for d in (WEB, FONTS, ICONS)) \
                 or not os.path.isfile(path):
             return self._send(404, {"error": "not found"})
         ctype = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                  ".js": "application/javascript; charset=utf-8", ".svg": "image/svg+xml",
-                 ".ttf": "font/ttf", ".otf": "font/otf", ".woff2": "font/woff2"}.get(
+                 ".ttf": "font/ttf", ".otf": "font/otf", ".woff2": "font/woff2",
+                 ".ico": "image/x-icon", ".png": "image/png"}.get(
                      os.path.splitext(path)[1].lower(), "application/octet-stream")
         with open(path, "rb") as f:
             return self._send(200, f.read(), ctype, cache)

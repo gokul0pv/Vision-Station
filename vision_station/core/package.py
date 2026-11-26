@@ -80,6 +80,11 @@ def export_package(app_folder, out_path, include_training=False, include_runtime
             for f in sorted(files):
                 if fnmatch.fnmatch(f, "*.pyc") or f.endswith(".partial"):
                     continue
+                # the advanced model's training weights: only a later teaching
+                # run starts from them; the package runs the .onnx
+                if f == "model.pt" and os.path.basename(root) == "advanced" \
+                        and not include_training:
+                    continue
                 full = os.path.join(root, f)
                 z.write(full, os.path.join("app", os.path.relpath(full, app_folder)))
         if include_runtime:
