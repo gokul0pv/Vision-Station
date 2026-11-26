@@ -62,3 +62,35 @@ add_custom_command(TARGET vc-run POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENCV_DIR}/x64/vc16/bin/opencv_world4100.dll"
         "${ORT_RUNTIME}/onnxruntime.dll" "${ORT_RUNTIME}/onnxruntime_providers_shared.dll" "${ORT_RUNTIME}/DirectML.dll"
         $<TARGET_FILE_DIR:vc-run>)
+
+# ---- engine process, supervisor, Studio
+add_library(vc_ipc STATIC src/core/client.cpp src/core/paths.cpp src/core/types.cpp)
+target_include_directories(vc_ipc PUBLIC third_party)
+target_link_libraries(vc_ipc PUBLIC opencv_world)
+
+# Basler pylon (C++ SDK, installed); its headers link its libraries themselves
+set(PYLON_DEV "C:/Program Files/Basler/pylon/Development" CACHE PATH "pylon SDK")
+add_library(vc_hw STATIC src/hw/camera.cpp)
+target_include_directories(vc_hw PUBLIC "${PYLON_DEV}/include")
+target_link_directories(vc_hw PUBLIC "${PYLON_DEV}/lib/x64")
+target_link_libraries(vc_hw PUBLIC opencv_world)
+
+add_executable(vc-engine src/apps/vc_engine.cpp)
+target_link_libraries(vc-engine PRIVATE vc_core vc_hw)
+if(MSVC)
+    target_link_options(vc-engine PRIVATE /WHOLEARCHIVE:vc_core)
+endif()
+
+add_executable(vc-supervisor src/apps/vc_supervisor.cpp)
+target_link_libraries(vc-supervisor PRIVATE vc_ipc)
+
+set(Slint_DIR "$ENV{LOCALAPPDATA}/slint-cpp-1.19.1/lib/cmake/Slint" CACHE PATH "Slint package")
+find_package(Slint REQUIRED)
+add_executable(vc-studio WIN32 src/apps/vc_studio.cpp)
+slint_target_sources(vc-studio ui/studio.slint)
+target_link_libraries(vc-studio PRIVATE vc_ipc Slint::Slint ole32 shell32)
+if(MSVC)
+    target_link_options(vc-studio PRIVATE /ENTRY:mainCRTStartup)
+endif()
+add_custom_command(TARGET vc-studio POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$ENV{LOCALAPPDATA}/slint-cpp-1.19.1/lib/slint_cpp.dll" $<TARGET_FILE_DIR:vc-studio>)

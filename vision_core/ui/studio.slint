@@ -269,6 +269,8 @@ export component StudioWindow inherits Window {
     callback pick-check(int);
 
     VerticalLayout {
+        width: root.width;
+        height: root.height;
         padding: 14px;
         spacing: 12px;
 
@@ -340,6 +342,8 @@ export component StudioWindow inherits Window {
                         Text { text: root.counts; color: Theme.text3; font-size: 12px; horizontal-alignment: right; }
                     }
                     Flickable {
+                        max-width: 100000px;
+                        max-height: 100000px;
                         vertical-stretch: 1;
                         viewport-height: col.preferred-height;
                         col := VerticalLayout {
@@ -437,6 +441,8 @@ export component StudioWindow inherits Window {
                 Card {
                     height: 76px;
                     Flickable {
+                        max-width: 100000px;
+                        max-height: 100000px;
                         viewport-width: strip.preferred-width;
                         strip := HorizontalLayout {
                             padding: 10px;
@@ -517,6 +523,8 @@ export component StudioWindow inherits Window {
                         }
                     }
                     Flickable {
+                        max-width: 100000px;
+                        max-height: 100000px;
                         vertical-stretch: 1;
                         viewport-height: kv.preferred-height;
                         kv := VerticalLayout {

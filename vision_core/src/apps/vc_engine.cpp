@@ -12,11 +12,15 @@
 // Pings are answered while an inspection runs, so a watcher can tell a
 // working engine from a hung one.
 #include "../core/engine.hpp"
+#include "../hw/camera.hpp"
+
+#include <opencv2/imgcodecs.hpp>
 
 #include <windows.h>
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <thread>
@@ -34,6 +38,7 @@ std::atomic<bool> g_busy{false};
 std::atomic<long long> g_busy_since{0};   // GetTickCount64 when the current job started
 std::atomic<bool> g_quit{false};
 std::unique_ptr<Project> g_side;
+std::unique_ptr<hw::Camera> g_cam;
 std::string g_side_path;
 
 Json tool_list(const Project& p) {
@@ -96,6 +101,52 @@ Json handle(const Json& req) {
         }, err);
         if (!ok) return {{"ok", false}, {"error", "inspection failed: " + err}};
         return {{"ok", true}, {"result", out}};
+    }
+    if (cmd == "camera_open") {
+        // {"address": "192.168.3.6", "exposure_us": 0, "gain": -1, "rotate": 0}
+        try {
+            if (!g_cam) g_cam = std::make_unique<hw::Camera>();
+            g_cam->open(req.value("address", ""), req.value("index", 0));
+            hw::CameraSettings cs;
+            cs.exposure_us = req.value("exposure_us", 0.0);
+            cs.gain = req.value("gain", -1.0);
+            cs.rotate = req.value("rotate", 0);
+            g_cam->apply(cs);
+            g_cam->start();
+            return {{"ok", true}, {"model", g_cam->model()}};
+        } catch (const std::exception& e) {
+            return {{"ok", false}, {"error", e.what()}};
+        }
+    }
+    if (cmd == "camera_close") {
+        if (g_cam) g_cam->close();
+        return {{"ok", true}};
+    }
+    if (cmd == "snap") {
+        // one fresh frame: saved (PNG) where asked or beside the program, and inspected when a job is open
+        if (!g_cam || !g_cam->is_open()) return {{"ok", false}, {"error", "no camera open"}};
+        cv::Mat img;
+        std::string why;
+        try {
+            for (int i = 0; i < 3 && img.empty(); i++) img = g_cam->grab(1500, &why);   // the first may be a frame in flight
+            img = g_cam->grab(3000, &why);
+        } catch (const std::exception& e) {
+            return {{"ok", false}, {"error", e.what()}};
+        }
+        if (img.empty()) return {{"ok", false}, {"error", "no frame from the camera" + (why.empty() ? std::string() : ": " + why)}};
+        std::string out = req.value("save", "");
+        if (out.empty()) out = (fs::temp_directory_path() / "vision-core-snap.png").u8string();
+        std::vector<uint8_t> buf;
+        cv::imencode(".png", img, buf);
+        { std::ofstream f(fs::u8path(out), std::ios::binary); f.write((const char*)buf.data(), buf.size()); }
+        Json resp = {{"ok", true}, {"picture", out}};
+        if (g_side) {
+            std::string err;
+            Json res;
+            if (guarded([&] { res = g_side->inspect(img, out, req.value("barcode", "")).to_json(); release_pictures(); }, err)) resp["result"] = res;
+            else resp["inspect_error"] = err;
+        }
+        return resp;
     }
     return {{"ok", false}, {"error", "unknown command '" + cmd + "'"}};
 }
