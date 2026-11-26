@@ -12,7 +12,10 @@
 // Pings are answered while an inspection runs, so a watcher can tell a
 // working engine from a hung one.
 #include "../core/engine.hpp"
+#include "../core/results.hpp"
 #include "../hw/camera.hpp"
+#include "../hw/light.hpp"
+#include "../hw/line.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 
@@ -39,6 +42,11 @@ std::atomic<long long> g_busy_since{0};   // GetTickCount64 when the current job
 std::atomic<bool> g_quit{false};
 std::unique_ptr<Project> g_side;
 std::unique_ptr<hw::Camera> g_cam;
+std::unique_ptr<ResultStore> g_store;   // the open job's run log
+std::mutex g_last_mx;
+Json g_last;                             // the last inspection, for GET on the line
+std::string g_code;                      // the barcode scanned for the next part
+Json handle(const Json& req);
 std::string g_side_path;
 
 Json tool_list(const Project& p) {
@@ -60,7 +68,8 @@ Json handle(const Json& req) {
     std::string cmd = req.value("cmd", "");
     if (cmd == "ping") {
         long long busy_ms = g_busy ? (long long)GetTickCount64() - g_busy_since.load() : 0;
-        return {{"ok", true}, {"busy", g_busy.load()}, {"busy_ms", busy_ms}, {"pid", (int)GetCurrentProcessId()}, {"side", g_side_path}};
+        return {{"ok", true}, {"busy", g_busy.load()}, {"busy_ms", busy_ms}, {"pid", (int)GetCurrentProcessId()}, {"side", g_side_path},
+                {"logged", g_store ? g_store->written() : 0}, {"log_error", g_store ? g_store->last_error() : std::string()}};
     }
     if (cmd == "types") {
         Json t = Json::array();
@@ -82,6 +91,9 @@ Json handle(const Json& req) {
         if (!guarded([&] { p = std::make_unique<Project>(side); }, err)) return {{"ok", false}, {"error", "cannot open " + side + ": " + err}};
         g_side = std::move(p);
         g_side_path = side;
+        g_store.reset();
+        if (req.value("log", true))
+            g_store = std::make_unique<ResultStore>(g_side->folder, g_side->id, req.value("archive", std::string("none")));
         std::string ref = g_side->spec.value("reference_image", "reference.png");
         fs::path rp = fs::u8path(ref).is_absolute() ? fs::u8path(ref) : fs::u8path(g_side->folder) / fs::u8path(ref);
         return {{"ok", true}, {"side", g_side->folder}, {"name", g_side->spec.value("name", g_side->id)}, {"tools", tool_list(*g_side)},
@@ -100,6 +112,8 @@ Json handle(const Json& req) {
             out = r.to_json();
         }, err);
         if (!ok) return {{"ok", false}, {"error", "inspection failed: " + err}};
+        { std::lock_guard<std::mutex> l2(g_last_mx); g_last = out; }
+        if (g_store) g_store->write(out, img);
         return {{"ok", true}, {"result", out}};
     }
     if (cmd == "camera_open") {
@@ -117,6 +131,52 @@ Json handle(const Json& req) {
         } catch (const std::exception& e) {
             return {{"ok", false}, {"error", e.what()}};
         }
+    }
+    if (cmd == "light") {
+        // {"action": "on|off|set|read|frame|ports", "port": "COM7", "channel": 1, "value": 128}
+        std::string a = req.value("action", "read");
+        int ch = req.value("channel", 1);
+        try {
+            if (a == "ports") return {{"ok", true}, {"ports", hw::serial_ports()}};
+            if (a == "frame") return {{"ok", true}, {"frame", hw::light_frame(req.value("light_cmd", std::string("3"))[0], ch, req.value("value", 0))}};
+            hw::Light l(req.value("port", ""));
+            if (a == "on") l.on(ch);
+            else if (a == "off") l.off(ch);
+            else if (a == "set") l.set_brightness(ch, req.value("value", 0));
+            else if (a == "read") return {{"ok", true}, {"level", l.brightness(ch)}};
+            else return {{"ok", false}, {"error", "unknown light action " + a}};
+            return {{"ok", true}};
+        } catch (const std::exception& e) {
+            return {{"ok", false}, {"error", e.what()}};
+        }
+    }
+    if (cmd == "line_start") {
+        // {"port": 3000, "barcode": {"prefix": "", "length": 0, "match_case": false}}  (barcode: optional)
+        hw::LineHooks h;
+        h.busy = [] { return g_busy.load(); };
+        h.job_name = [] { return g_side ? g_side->id : std::string(); };
+        h.last = [] { std::lock_guard<std::mutex> l(g_last_mx); return g_last; };
+        h.trigger = [](const std::string&, std::string& err) -> Json {
+            Json r = handle({{"cmd", "snap"}, {"barcode", g_code}});
+            g_code.clear();
+            if (!r.value("ok", false)) { err = r.value("error", std::string("no frame")); return Json(); }
+            if (!r.contains("result")) { err = r.value("inspect_error", std::string("no job open")); return Json(); }
+            return r["result"];
+        };
+        if (req.contains("barcode") && req["barcode"].is_object()) {
+            Json b = req["barcode"];
+            std::string prefix = b.value("prefix", "");
+            int length = b.value("length", 0);
+            bool mc = b.value("match_case", false);
+            h.code = [prefix, length, mc](const std::string& raw) {
+                auto r = hw::barcode_check(raw, prefix, length, mc);
+                if (r.first) g_code = r.second;
+                return r;
+            };
+        }
+        std::string err;
+        if (!hw::start_line_server(req.value("port", 3000), h, err)) return {{"ok", false}, {"error", err}};
+        return {{"ok", true}};
     }
     if (cmd == "camera_close") {
         if (g_cam) g_cam->close();
@@ -143,7 +203,12 @@ Json handle(const Json& req) {
         if (g_side) {
             std::string err;
             Json res;
-            if (guarded([&] { res = g_side->inspect(img, out, req.value("barcode", "")).to_json(); release_pictures(); }, err)) resp["result"] = res;
+            if (guarded([&] { res = g_side->inspect(img, out, req.value("barcode", "")).to_json(); release_pictures(); }, err)) {
+                resp["result"] = res;
+                if (g_store) g_store->write(res, img);
+                std::lock_guard<std::mutex> l2(g_last_mx);
+                g_last = res;
+            }
             else resp["inspect_error"] = err;
         }
         return resp;

@@ -42,6 +42,8 @@ add_library(vc_core STATIC
     src/core/engine.cpp
     src/core/onnx.cpp
     src/core/paths.cpp
+    src/core/results.cpp
+    third_party/sqlite/sqlite3.c
     src/tools/align.cpp
     src/tools/count.cpp
     src/tools/color.cpp
@@ -49,7 +51,8 @@ add_library(vc_core STATIC
     src/tools/ocr_engine.cpp
     src/tools/text.cpp
 )
-target_include_directories(vc_core PUBLIC third_party)
+target_include_directories(vc_core PUBLIC third_party third_party/sqlite)
+set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_DEFINITIONS "SQLITE_THREADSAFE=1;SQLITE_DEFAULT_WAL_SYNCHRONOUS=1")
 target_link_libraries(vc_core PUBLIC opencv_world onnxruntime)
 
 # command-line runner; WHOLEARCHIVE keeps every check's self-registration
@@ -70,10 +73,11 @@ target_link_libraries(vc_ipc PUBLIC opencv_world)
 
 # Basler pylon (C++ SDK, installed); its headers link its libraries themselves
 set(PYLON_DEV "C:/Program Files/Basler/pylon/Development" CACHE PATH "pylon SDK")
-add_library(vc_hw STATIC src/hw/camera.cpp)
+add_library(vc_hw STATIC src/hw/camera.cpp src/hw/light.cpp src/hw/line.cpp)
 target_include_directories(vc_hw PUBLIC "${PYLON_DEV}/include")
 target_link_directories(vc_hw PUBLIC "${PYLON_DEV}/lib/x64")
-target_link_libraries(vc_hw PUBLIC opencv_world)
+target_link_libraries(vc_hw PUBLIC opencv_world ws2_32)
+target_include_directories(vc_hw PUBLIC third_party)
 
 add_executable(vc-engine src/apps/vc_engine.cpp)
 target_link_libraries(vc-engine PRIVATE vc_core vc_hw)
