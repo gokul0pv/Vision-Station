@@ -3,6 +3,8 @@
 //   ... --dump <dir>   also write the images tools made, <picture>__<tool>.png
 //   vc-run types                                              the check types built in
 #include "../core/engine.hpp"
+#include "../core/linalg.hpp"
+#include "../core/nprandom.hpp"
 
 #include <opencv2/core/utility.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -34,6 +36,34 @@ int wmain(int argc, wchar_t** wargv) {
     if (args.empty()) {
         std::cerr << "vc-run inspect <side folder> <pictures> [--json]\nvc-run types\n";
         return 2;
+    }
+    if (args[0] == "npy-selftest") {
+        // numbers numpy also prints (tests/npy_selftest.py compares them)
+        Json j;
+        j["blas"] = la::source();
+        npr::Generator g(0);
+        Json seq = Json::array();
+        for (int i = 0; i < 60; i++) {
+            int64_t pop = 3 + (i * 7) % 23, size = 2 + i % 2;
+            Json c = g.choice(pop, size);
+            seq.push_back(c);
+            seq.push_back(g.integers(1 + i % 4));
+        }
+        j["rng"] = seq;
+        double P[12] = {1.5, 2.25, 3.1, 4.7, 5.2, 6.9, 7.3, 8.8, 9.1, 10.4, 11.6, 12.2};
+        j["svd"] = la::svd_vh(P, 6, 2);
+        double A[18], b[6];
+        for (int i = 0; i < 6; i++) { A[i * 3] = P[2 * i]; A[i * 3 + 1] = P[2 * i + 1]; A[i * 3 + 2] = 1; b[i] = P[2 * i] * P[2 * i] + P[2 * i + 1] * P[2 * i + 1]; }
+        j["lstsq"] = la::lstsq(A, b, 6, 3);
+        double x[2] = {-0.6, 0.8};
+        j["matvec"] = la::matvec(P, x, 6, 2);
+        float Pf[12], xf[2] = {-0.6f, 0.8f};
+        for (int i = 0; i < 12; i++) Pf[i] = (float)P[i] * 1.37f;
+        auto mf = la::matvec(Pf, xf, 6, 2);
+        j["matvec_f32"] = std::vector<double>(mf.begin(), mf.end());
+        j["dot"] = la::dot(P, P + 2, 2);
+        std::cout << j.dump() << std::endl;
+        return 0;
     }
     if (args[0] == "types") {
         for (auto& [k, v] : registry()) std::cout << k << "\n";

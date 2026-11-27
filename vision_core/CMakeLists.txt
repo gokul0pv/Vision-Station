@@ -37,6 +37,8 @@ set_target_properties(onnxruntime PROPERTIES
 add_library(vc_core STATIC
     src/core/types.cpp
     src/core/npy.cpp
+    src/core/linalg.cpp
+    src/core/nprandom.cpp
     src/core/pyfmt.cpp
     src/core/tool.cpp
     src/core/engine.cpp
@@ -48,6 +50,8 @@ add_library(vc_core STATIC
     src/tools/count.cpp
     src/tools/color.cpp
     src/tools/image.cpp
+    src/tools/geometry.cpp
+    src/tools/plots.cpp
     src/tools/measure.cpp
     src/tools/ocr_engine.cpp
     src/tools/text.cpp
@@ -55,6 +59,10 @@ add_library(vc_core STATIC
 target_include_directories(vc_core PUBLIC third_party third_party/sqlite)
 set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_DEFINITIONS "SQLITE_THREADSAFE=1;SQLITE_DEFAULT_WAL_SYNCHRONOUS=1")
 target_link_libraries(vc_core PUBLIC opencv_world onnxruntime)
+
+# numpy's own OpenBLAS (loaded at run time by src/core/linalg.cpp) so fits match numpy bit for bit
+set(OPENBLAS_DIR "$ENV{LOCALAPPDATA}/vc-tools/openblas" CACHE PATH "libscipy_openblas64_*.dll from numpy.libs")
+file(GLOB OPENBLAS_DLLS "${OPENBLAS_DIR}/libscipy_openblas64_*.dll")
 
 # command-line runner; WHOLEARCHIVE keeps every check's self-registration
 add_executable(vc-run src/apps/vc_run.cpp)
@@ -65,6 +73,7 @@ endif()
 add_custom_command(TARGET vc-run POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENCV_DIR}/x64/vc16/bin/opencv_world4100.dll"
         "${ORT_RUNTIME}/onnxruntime.dll" "${ORT_RUNTIME}/onnxruntime_providers_shared.dll" "${ORT_RUNTIME}/DirectML.dll"
+        ${OPENBLAS_DLLS}
         $<TARGET_FILE_DIR:vc-run>)
 
 # ---- engine process, supervisor, Studio

@@ -7,6 +7,7 @@ driver), exactly as Vision Station does.
 Each program's imports are checked with dumpbin: a DLL it needs that is
 neither shipped nor part of Windows stops the build, so a package cannot
 leave the line PC with a missing file."""
+import glob
 import datetime
 import os
 import shutil
@@ -49,6 +50,9 @@ def main():
     os.makedirs(DIST)
     for f in PROGRAMS + DLLS:
         shutil.copy2(os.path.join(BUILD, f), DIST)
+    # numpy's OpenBLAS: fits computed exactly as Vision Station computes them (src/core/linalg.cpp)
+    for f in glob.glob(os.path.join(BUILD, "libscipy_openblas64_*.dll")):
+        shutil.copy2(f, DIST)
     for f in RUNTIME:
         shutil.copy2(os.path.join(os.environ["SystemRoot"], "System32", f), DIST)
     # the text reader's models
@@ -62,7 +66,8 @@ def main():
                       (os.path.join(LOCAL, "onnxruntime-dml-1.24.4", "ThirdPartyNotices.txt"), "ONNXRuntime-ThirdPartyNotices.txt"),
                       (os.path.join(LOCAL, "slint-cpp-1.19.1", "licenses", "LICENSE.md"), "Slint-LICENSE.md"),
                       (os.path.join(HERE, "ui", "fonts", "Inter-LICENSE.txt"), "Inter-LICENSE.txt"),
-                      (os.path.join(HERE, "ui", "icons", "LICENSE.txt"), "Lucide-LICENSE.txt")):
+                      (os.path.join(HERE, "ui", "icons", "LICENSE.txt"), "Lucide-LICENSE.txt"),
+                      (os.path.join(LOCAL, "vc-tools", "openblas", "LICENSE.txt"), "OpenBLAS-numpy-LICENSE.txt")):
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(lic, name))
     with open(os.path.join(DIST, "Start Vision Core.bat"), "w") as f:
