@@ -53,11 +53,19 @@ def main():
     # numpy's OpenBLAS: fits computed exactly as Vision Station computes them (src/core/linalg.cpp)
     for f in glob.glob(os.path.join(BUILD, "libscipy_openblas64_*.dll")):
         shutil.copy2(f, DIST)
+    # the barcode decoders (src/core/codes.cpp): zbar + its iconv, libdmtx
+    for f in ("libzbar-64.dll", "libiconv.dll", "libdmtx-64.dll"):
+        if os.path.exists(os.path.join(BUILD, f)):
+            shutil.copy2(os.path.join(BUILD, f), DIST)
     for f in RUNTIME:
         shutil.copy2(os.path.join(os.environ["SystemRoot"], "System32", f), DIST)
     # the text reader's models
     shutil.copytree(os.path.join(ROOT, "models", "ocr"), os.path.join(DIST, "models", "ocr"),
                     ignore=shutil.ignore_patterns("*.yml"))
+    # the trained surface check's deep model network
+    bb = os.path.join(ROOT, "models", "backbone")
+    if os.path.isdir(bb):
+        shutil.copytree(bb, os.path.join(DIST, "models", "backbone"))
     # licences of everything shipped
     lic = os.path.join(DIST, "licenses")
     os.makedirs(lic)
@@ -67,7 +75,11 @@ def main():
                       (os.path.join(LOCAL, "slint-cpp-1.19.1", "licenses", "LICENSE.md"), "Slint-LICENSE.md"),
                       (os.path.join(HERE, "ui", "fonts", "Inter-LICENSE.txt"), "Inter-LICENSE.txt"),
                       (os.path.join(HERE, "ui", "icons", "LICENSE.txt"), "Lucide-LICENSE.txt"),
-                      (os.path.join(LOCAL, "vc-tools", "openblas", "LICENSE.txt"), "OpenBLAS-numpy-LICENSE.txt")):
+                      (os.path.join(LOCAL, "vc-tools", "openblas", "LICENSE.txt"), "OpenBLAS-numpy-LICENSE.txt"),
+                      (os.path.join(LOCAL, "vc-tools", "codes", "zbar-LICENSE.txt"), "zbar-LICENSE.txt"),
+                      (os.path.join(LOCAL, "vc-tools", "codes", "libdmtx-LICENSE.txt"), "libdmtx-LICENSE.txt"),
+                      (os.path.join(HERE, "third_party", "x86-simd-sort", "LICENSE.md"), "x86-simd-sort-LICENSE.md"),
+                      (os.path.join(HERE, "third_party", "miniz", "LICENSE"), "miniz-LICENSE.txt")):
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(lic, name))
     with open(os.path.join(DIST, "Start Vision Core.bat"), "w") as f:

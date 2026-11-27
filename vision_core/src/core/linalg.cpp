@@ -30,6 +30,7 @@ using dgemv_t = void (*)(int, int, i64, i64, double, const double*, i64, const d
 using sgemv_t = void (*)(int, int, i64, i64, float, const float*, i64, const float*, i64, float, float*, i64);
 using ddot_t = double (*)(i64, const double*, i64, const double*, i64);
 using dgemm_t = void (*)(int, int, int, i64, i64, i64, double, const double*, i64, const double*, i64, double, double*, i64);
+using sgemm_t = void (*)(int, int, int, i64, i64, i64, float, const float*, i64, const float*, i64, float, float*, i64);
 using dgetrf_t = void (*)(const i64*, const i64*, double*, const i64*, i64*, i64*);
 using threads_t = void (*)(int);
 
@@ -41,6 +42,7 @@ struct Lib {
     ddot_t ddot = nullptr;
     dgemm_t dgemm = nullptr;
     dgetrf_t dgetrf = nullptr;
+    sgemm_t sgemm = nullptr;
     std::string where;
     bool ok = false;
 };
@@ -73,7 +75,8 @@ const Lib& lib() {
             L.ddot = (ddot_t)GetProcAddress(h, "scipy_cblas_ddot64_");
             L.dgemm = (dgemm_t)GetProcAddress(h, "scipy_cblas_dgemm64_");
             L.dgetrf = (dgetrf_t)GetProcAddress(h, "scipy_dgetrf_64_");
-            if (L.dgesdd && L.dgelsd && L.dgemv && L.sgemv && L.ddot && L.dgemm && L.dgetrf) {
+            L.sgemm = (sgemm_t)GetProcAddress(h, "scipy_cblas_sgemm64_");
+            if (L.sgemm && L.dgesdd && L.dgelsd && L.dgemv && L.sgemv && L.ddot && L.dgemm && L.dgetrf) {
                 if (auto t = (threads_t)GetProcAddress(h, "scipy_openblas_set_num_threads64_")) t(1);
                 L.ok = true;
                 L.where = p.u8string();
@@ -197,6 +200,21 @@ std::vector<double> gemm(bool ta, bool tb, int M, int N, int K, const double* A,
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++) {
             double s = 0;
+            for (int k = 0; k < K; k++) s += (ta ? A[(size_t)k * lda + i] : A[(size_t)i * lda + k]) * (tb ? B[(size_t)j * ldb + k] : B[(size_t)k * ldb + j]);
+            C[(size_t)i * N + j] = s;
+        }
+    return C;
+}
+
+std::vector<float> sgemm(bool ta, bool tb, int M, int N, int K, const float* A, int lda, const float* B, int ldb) {
+    std::vector<float> C((size_t)M * N, 0.0f);
+    if (lib().ok) {
+        lib().sgemm(RowMajor, ta ? Trans : NoTrans, tb ? Trans : NoTrans, M, N, K, 1.0f, A, lda, B, ldb, 0.0f, C.data(), N);
+        return C;
+    }
+    for (int i = 0; i < M; i++)
+        for (int j = 0; j < N; j++) {
+            float s = 0;
             for (int k = 0; k < K; k++) s += (ta ? A[(size_t)k * lda + i] : A[(size_t)i * lda + k]) * (tb ? B[(size_t)j * ldb + k] : B[(size_t)k * ldb + j]);
             C[(size_t)i * N + j] = s;
         }

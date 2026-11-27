@@ -4,6 +4,12 @@
 #include "../core/pyfmt.hpp"
 #include "../core/tool.hpp"
 #include "ocr_engine.hpp"
+#include "../core/codes.hpp"
+#include "../core/pyre.hpp"
+
+#include <opencv2/imgproc.hpp>
+#include <opencv2/objdetect.hpp>
+#include <opencv2/objdetect/barcode.hpp>
 
 #include <regex>
 
@@ -317,12 +323,12 @@ public:
         } else if (!pattern.empty()) {
             std::regex rx;
             try {
-                rx = std::regex(S(pattern), std::regex::ECMAScript);
-            } catch (const std::regex_error& e) {
+                rx = pyre::compile(S(pattern));
+            } catch (const pyre::Error& e) {
                 return reader_error(ctx, std::string("the expected pattern is not valid: ") + e.what(), t0);
             }
             for (auto& c : cands)
-                if (std::regex_match(S(c), rx)) { matched = c; break; }
+                if (pyre::fullmatch(rx, S(c))) { matched = c; break; }
             ok = matched.has_value();
             why = "read '" + S(head(text, 80)) + "' does not match /" + S(pattern) + "/";
         } else {
@@ -341,5 +347,149 @@ public:
     }
 };
 VC_REGISTER("ocv", Ocv)
+
+
+// ---------------------------------------------------------------- code reading
+namespace {
+
+// text._code_variants: the region as taken, then versions that rescue a poor code
+std::vector<std::pair<std::string, cv::Mat>> code_variants(const cv::Mat& crop) {
+    std::vector<std::pair<std::string, cv::Mat>> v;
+    cv::Mat g = to_gray(crop);
+    int long_side = std::max(g.rows, g.cols);
+    if (long_side > 2400) {
+        double f = 2400.0 / long_side;
+        cv::Mat r;
+        cv::resize(g, r, cv::Size(), f, f, cv::INTER_AREA);
+        g = r;
+        long_side = 2400;
+    }
+    v.emplace_back("as taken", g);
+    cv::Mat up = g;
+    if (long_side < 900) {
+        cv::resize(g, up, cv::Size(), 2.0, 2.0, cv::INTER_CUBIC);
+        v.emplace_back("enlarged", up);
+    }
+    cv::Mat c;
+    cv::createCLAHE(3.0, cv::Size(8, 8))->apply(up, c);
+    v.emplace_back("contrast", c);
+    cv::Mat blur, sh;
+    cv::GaussianBlur(up, blur, cv::Size(0, 0), 1.2);
+    cv::addWeighted(up, 1.8, blur, -0.8, 0, sh);
+    v.emplace_back("sharpened", sh);
+    int blk = std::max(31, (std::min(up.rows, up.cols) / 8) | 1);
+    cv::Mat th;
+    cv::adaptiveThreshold(up, th, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, blk, 8);
+    v.emplace_back("thresholded", th);
+    cv::Mat inv;
+    cv::bitwise_not(up, inv);
+    v.emplace_back("inverted", inv);
+    return v;
+}
+
+// text._decode_codes
+std::vector<codes::Code> decode_codes(const cv::Mat& img, bool datamatrix, int timeout_ms) {
+    std::vector<codes::Code> found;
+    if (codes::zbar_available()) {
+        try {
+            found = codes::zbar_decode(img);
+        } catch (...) {
+            found.clear();
+        }
+    }
+    if (found.empty()) {
+        try {
+            std::vector<std::string> texts;
+            std::vector<cv::Point> pts;
+            if (cv::QRCodeDetector().detectAndDecodeMulti(img, texts, pts))
+                for (auto& t : texts)
+                    if (!t.empty()) found.push_back({t, "QRCODE"});
+        } catch (...) {
+        }
+    }
+    if (found.empty()) {
+        try {
+            std::vector<std::string> texts;
+            std::vector<cv::Point2f> pts;
+            cv::barcode::BarcodeDetector bd;
+            bd.detectAndDecodeMulti(img, texts, pts);
+            // Vision Station takes this call's third output (the corners) as the symbology
+            for (size_t i = 0; i < texts.size(); i++)
+                if (!texts[i].empty()) found.push_back({texts[i], "BARCODE"});
+        } catch (...) {
+        }
+    }
+    if (found.empty() && datamatrix && codes::dmtx_available()) {
+        try {
+            found = codes::dmtx_decode(img, timeout_ms);
+        } catch (...) {
+            found.clear();
+        }
+    }
+    return found;
+}
+
+}  // namespace
+
+class CodeRead : public TextTool {
+public:
+    using TextTool::TextTool;
+    ToolResult run(const cv::Mat& image, Context& ctx) override {
+        double t0 = now_ms();
+        auto [crop, o] = this->crop(image, ctx);
+        (void)o;
+        if (crop.empty()) return ToolResult(id, type_name, "error", 0.0, Json::object(), roi_graphic(ctx, "error"), "empty region", now_ms() - t0);
+        std::vector<codes::Code> found;
+        std::string how;
+        bool dm = pb("datamatrix", true);
+        int budget = pi("timeout_ms", 800);
+        for (auto& [name, img] : code_variants(crop)) {
+            how = name;
+            found = decode_codes(img, dm, budget);
+            if (!found.empty()) break;
+            if (now_ms() - t0 > 6.0 * budget) break;   // a region with no code must not stall the line
+        }
+        std::string pattern = S(ocr::strip(U(ps("expect_regex", ""))));
+        bool ok = !found.empty();
+        std::string why = found.empty() ? "no code found in this region" : "";
+        std::optional<std::string> data;
+        if (!found.empty()) data = found[0].data;
+        if (!found.empty() && !pattern.empty()) {
+            std::regex rx;
+            try {
+                rx = pyre::compile(pattern);
+            } catch (const pyre::Error& e) {
+                return reader_error(ctx, std::string("the expected pattern is not valid: ") + e.what(), t0);
+            }
+            const codes::Code* hit = nullptr;
+            for (auto& f : found)
+                if (pyre::fullmatch(rx, f.data)) {
+                    hit = &f;
+                    break;
+                }
+            ok = hit != nullptr;
+            if (hit) data = hit->data;
+            why = ok ? "" : "read '" + S(head(U(*data), 60)) + "', which does not match /" + pattern + "/";
+        }
+        std::vector<u32string> read;
+        for (auto& f : found) read.push_back(U(f.data));
+        Json cmp = compare_scanned(ctx, read, true);
+        if (!cmp.empty() && !cmp["barcode_match"].get<bool>()) {
+            ok = false;
+            std::string all;
+            for (size_t i = 0; i < found.size(); i++) all += (i ? ", " : "") + found[i].data;
+            all = S(head(U(all), 120));
+            why = "Barcode not good: scanned " + cmp["barcode_scanned"].get<std::string>() + ", read " + (all.empty() ? std::string("no code") : all);
+        }
+        std::string label = data ? *data : "no read";
+        Json cl = Json::array();
+        for (auto& f : found) cl.push_back({{"data", f.data}, {"symbology", f.symbology}});
+        Json v = {{"codes", cl}, {"data", data ? Json(*data) : Json()}, {"count", (int)found.size()}, {"read_from", found.empty() ? "" : how}};
+        for (auto& [k, x] : cmp.items()) v[k] = x;
+        std::string st = ok ? "pass" : "fail";
+        return ToolResult(id, type_name, st, found.empty() ? 0.0 : 1.0, v, roi_graphic(ctx, st, S(head(U(label), 40))), why, now_ms() - t0);
+    }
+};
+VC_REGISTER("code_read", CodeRead)
 
 }  // namespace vc

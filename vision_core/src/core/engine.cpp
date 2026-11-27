@@ -158,6 +158,8 @@ static std::optional<Json> resolve_link(const std::string& ref, const std::map<s
     return std::nullopt;
 }
 
+std::vector<std::string> caption(const ToolResult& r, const Json& params);   // annotate.cpp
+
 static void outline(Tool& tool, ToolResult& r, const Context& ctx, bool reads_transformed) {
     bool has_region = false;
     for (auto& g : r.graphics) has_region |= g.role == "region";
@@ -174,6 +176,8 @@ static void outline(Tool& tool, ToolResult& r, const Context& ctx, bool reads_tr
             g.status = r.status;
             g.label.clear();
         }
+    std::string err;
+    if (!guarded([&] { r.caption = caption(r, tool.p); }, err)) r.caption.clear();
 }
 
 static void filter_graphics(std::vector<Graphic>& gs, const Json& opt) {

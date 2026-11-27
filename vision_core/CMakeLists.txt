@@ -40,6 +40,11 @@ add_library(vc_core STATIC
     src/core/linalg.cpp
     src/core/nprandom.cpp
     src/core/npsort.cpp
+    src/core/npz.cpp
+    src/core/codes.cpp
+    src/core/pyre.cpp
+    src/core/annotate.cpp
+    third_party/miniz/miniz.c
     src/core/npsort_avx2.cpp
     src/core/npsort_avx512.cpp
     src/core/pyfmt.cpp
@@ -58,6 +63,8 @@ add_library(vc_core STATIC
     src/tools/analysis.cpp
     src/tools/more_tools.cpp
     src/tools/construct.cpp
+    src/tools/models.cpp
+    src/tools/learned.cpp
     src/tools/measure.cpp
     src/tools/ocr_engine.cpp
     src/tools/text.cpp
@@ -73,6 +80,9 @@ set_source_files_properties(src/core/npsort_avx512.cpp PROPERTIES COMPILE_OPTION
 # numpy's own OpenBLAS (loaded at run time by src/core/linalg.cpp) so fits match numpy bit for bit
 set(OPENBLAS_DIR "$ENV{LOCALAPPDATA}/vc-tools/openblas" CACHE PATH "libscipy_openblas64_*.dll from numpy.libs")
 file(GLOB OPENBLAS_DLLS "${OPENBLAS_DIR}/libscipy_openblas64_*.dll")
+# the barcode decoders pyzbar / pylibdmtx ship (loaded at run time by src/core/codes.cpp)
+set(CODES_DIR "$ENV{LOCALAPPDATA}/vc-tools/codes" CACHE PATH "libzbar-64.dll, libiconv.dll, libdmtx-64.dll")
+file(GLOB CODES_DLLS "${CODES_DIR}/*.dll")
 
 # command-line runner; WHOLEARCHIVE keeps every check's self-registration
 add_executable(vc-run src/apps/vc_run.cpp)
@@ -83,7 +93,7 @@ endif()
 add_custom_command(TARGET vc-run POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENCV_DIR}/x64/vc16/bin/opencv_world4100.dll"
         "${ORT_RUNTIME}/onnxruntime.dll" "${ORT_RUNTIME}/onnxruntime_providers_shared.dll" "${ORT_RUNTIME}/DirectML.dll"
-        ${OPENBLAS_DLLS}
+        ${OPENBLAS_DLLS} ${CODES_DLLS}
         $<TARGET_FILE_DIR:vc-run>)
 
 # ---- engine process, supervisor, Studio

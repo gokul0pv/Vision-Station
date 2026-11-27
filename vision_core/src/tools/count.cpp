@@ -457,8 +457,8 @@ std::vector<int> nms(const std::vector<std::array<float, 4>>& b, const std::vect
             float xx1 = std::max(ax1, bx1), yy1 = std::max(ay1, by1), xx2 = std::min(ax2, bx2), yy2 = std::min(ay2, by2);
             float inter = std::max(0.0f, xx2 - xx1) * std::max(0.0f, yy2 - yy1);
             float aj = (bx2 - bx1) * (by2 - by1);
-            double iou = (double)inter / ((double)(ai + aj - inter) + 1e-9);
-            if (iou <= iou_thr) rest.push_back(j);
+            float iou = inter / (((ai + aj) - inter) + 1e-9f);   // float32 throughout, as numpy
+            if (iou <= (float)iou_thr) rest.push_back(j);
         }
         order = rest;
     }

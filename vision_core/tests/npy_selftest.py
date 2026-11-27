@@ -26,6 +26,18 @@ py['argsort'] = asl
 py['det'] = float(np.linalg.det(P[:2]))
 py['gemm'] = (P[:2] @ P.T).ravel().tolist()
 py['lstsq2'] = np.linalg.lstsq(A, P, rcond=None)[0].ravel().tolist()
+import re
+pats = ['(', 'a)', '[abc', '*a', 'a**', r'(?P<x>\d+)-(?P=x)', r'(?i)lot-\d+', r'\q', 'a{,3}', r'ab\Z',
+        '^+', 'x|*', 'a{2}{3}', '(a(b', '^[A-Z]{2}[0-9]{6}$', r'LOT-\d{5}', 'a*?b', '[]a]+']
+texts = ['12-12', 'LOT-01234', 'aaa', 'ab', 'AB123456', 'lot-77', ']a]', 'aab', '12-13']
+pr = []
+for pat in pats:
+    try:
+        rx = re.compile(pat)
+        pr.append([rx.fullmatch(t) is not None for t in texts])
+    except re.error as e:
+        pr.append(str(e))
+py['pyre'] = pr
 print('blas:', vc['blas'], '| argsort:', vc['argsort_path'])
 bad = 0
 for k, v in py.items():

@@ -6,6 +6,7 @@
 #include "../core/linalg.hpp"
 #include "../core/nprandom.hpp"
 #include "../core/npsort.hpp"
+#include "../core/pyre.hpp"
 
 #include <opencv2/core/utility.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -68,6 +69,25 @@ int wmain(int argc, wchar_t** wargv) {
         j["gemm"] = la::gemm(false, true, 2, 6, 2, P, 2, P, 2);
         j["lstsq2"] = la::lstsq(A, P, 6, 3, 2);
         j["argsort_path"] = npy::argsort_path();
+        {   // Python's re: compile errors and fullmatch (same lists as tests/npy_selftest.py)
+            const char* pats[] = {"(", "a)", "[abc", "*a", "a**", R"((?P<x>\d+)-(?P=x))", R"((?i)lot-\d+)", R"(\q)", "a{,3}", R"(ab\Z)",
+                                  "^+", "x|*", "a{2}{3}", "(a(b", "^[A-Z]{2}[0-9]{6}$", R"(LOT-\d{5})", "a*?b", "[]a]+"};
+            const char* texts[] = {"12-12", "LOT-01234", "aaa", "ab", "AB123456", "lot-77", "]a]", "aab", "12-13"};
+            Json pr = Json::array();
+            for (auto pat : pats) {
+                Json row;
+                try {
+                    auto rx = pyre::compile(pat);
+                    Json m = Json::array();
+                    for (auto t : texts) m.push_back(pyre::fullmatch(rx, t));
+                    row = m;
+                } catch (const pyre::Error& e) {
+                    row = e.what();
+                }
+                pr.push_back(row);
+            }
+            j["pyre"] = pr;
+        }
         Json as = Json::array();
         npr::Generator ag(7);
         for (int n = 1; n <= 300; n += (n < 40 ? 1 : 13)) {
