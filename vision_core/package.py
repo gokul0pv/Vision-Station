@@ -22,7 +22,7 @@ DIST = os.path.join(HERE, "dist", "VisionCore")
 LOCAL = os.environ["LOCALAPPDATA"]
 DUMPBIN = os.path.join(LOCAL, r"msvc-portable\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe")
 
-PROGRAMS = ["vc-studio.exe", "vc-engine.exe", "vc-supervisor.exe", "vc-run.exe"]
+PROGRAMS = ["Vision Core.exe", "vc-studio.exe", "vc-engine.exe", "vc-supervisor.exe", "vc-run.exe"]
 DLLS = ["opencv_world4100.dll", "onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll", "slint_cpp.dll"]
 # the Microsoft C++ runtime (redistributable by Microsoft's licence)
 RUNTIME = ["msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll"]
@@ -84,10 +84,11 @@ def main():
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(lic, name))
     with open(os.path.join(DIST, "Start Vision Core.bat"), "w") as f:
-        f.write('@echo off\r\ncd /d "%~dp0"\r\nstart "" vc-supervisor.exe --studio\r\n')
+        f.write('@echo off\r\ncd /d "%~dp0"\r\nstart "" "Vision Core.exe"\r\n')
     with open(os.path.join(DIST, "README.txt"), "w") as f:
-        f.write("Vision Core\r\n\r\nStart: double-click 'Start Vision Core.bat' (the supervisor starts the\r\n"
-                "engine and the Studio, and restarts the engine if it ever stops).\r\n\r\n"
+        f.write("Vision Core\r\n\r\nStart: double-click 'Vision Core.exe' (it starts the supervisor, which\r\n"
+                "starts the engine and the Studio and restarts the engine if it ever\r\n"
+                "stops). Double-click it again to bring the Studio back.\r\n\r\n"
                 "Camera: install Basler pylon (the camera driver) first.\r\n"
                 "Line PCs: vc-engine listens on \\\\.\\pipe\\vision-core-engine; the TCP line\r\n"
                 "interface is started with the engine command line_start.\r\n")

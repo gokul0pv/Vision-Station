@@ -116,12 +116,12 @@ if(MSVC)
     target_link_options(vc-engine PRIVATE /WHOLEARCHIVE:vc_core)
 endif()
 
-add_executable(vc-supervisor src/apps/vc_supervisor.cpp)
+add_executable(vc-supervisor src/apps/vc_supervisor.cpp src/apps/app.rc)
 target_link_libraries(vc-supervisor PRIVATE vc_ipc)
 
 set(Slint_DIR "$ENV{LOCALAPPDATA}/slint-cpp-1.19.1/lib/cmake/Slint" CACHE PATH "Slint package")
 find_package(Slint REQUIRED)
-add_executable(vc-studio WIN32 src/apps/vc_studio.cpp)
+add_executable(vc-studio WIN32 src/apps/vc_studio.cpp src/apps/app.rc)
 slint_target_sources(vc-studio ui/studio.slint)
 target_link_libraries(vc-studio PRIVATE vc_ipc Slint::Slint ole32 shell32)
 if(MSVC)
@@ -129,3 +129,8 @@ if(MSVC)
 endif()
 add_custom_command(TARGET vc-studio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$ENV{LOCALAPPDATA}/slint-cpp-1.19.1/lib/slint_cpp.dll" $<TARGET_FILE_DIR:vc-studio>)
+
+# "Vision Core.exe": what a person double-clicks (starts everything, or brings the Studio forward)
+add_executable(vc-launcher WIN32 src/apps/vc_launcher.cpp src/apps/app.rc)
+set_target_properties(vc-launcher PROPERTIES OUTPUT_NAME "Vision Core")
+target_link_libraries(vc-launcher PRIVATE user32)
