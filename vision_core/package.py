@@ -70,6 +70,7 @@ def main():
     lic = os.path.join(DIST, "licenses")
     os.makedirs(lic)
     for src, name in ((os.path.join(LOCAL, "opencv-4.10.0", "LICENSE"), "OpenCV-LICENSE.txt"),
+                      (os.path.join(LOCAL, "vc-tools", "opencv-LICENSE.txt"), "OpenCV-LICENSE.txt"),
                       (os.path.join(LOCAL, "onnxruntime-dml-1.24.4", "LICENSE"), "ONNXRuntime-LICENSE.txt"),
                       (os.path.join(LOCAL, "onnxruntime-dml-1.24.4", "ThirdPartyNotices.txt"), "ONNXRuntime-ThirdPartyNotices.txt"),
                       (os.path.join(LOCAL, "slint-cpp-1.19.1", "licenses", "LICENSE.md"), "Slint-LICENSE.md"),
