@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Vision Station: a lens (the camera's eye) inside a viewfinder (what it
+       inspects), white on the application's blue. Sizes 32 px and up;
+       vision_station_small.svg is drawn for 16-24 px. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6FA2FF"/>
+      <stop offset="0.5" stop-color="#0A59F7"/>
+      <stop offset="1" stop-color="#0036B0"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.28" cy="0.12" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="iris" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#A9E4FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="58" fill="url(#bg)"/>
+  <rect x="16" y="16" width="224" height="224" rx="58" fill="url(#sheen)"/>
+  <rect x="17" y="17" width="222" height="222" rx="57" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="2"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.92">
+    <path d="M62 94V76a14 14 0 0 1 14-14h18"/>
+    <path d="M162 62h18a14 14 0 0 1 14 14v18"/>
+    <path d="M194 162v18a14 14 0 0 1-14 14h-18"/>
+    <path d="M94 194H76a14 14 0 0 1-14-14v-18"/>
+  </g>
+  <circle cx="128" cy="128" r="41" fill="none" stroke="#FFFFFF" stroke-width="13"/>
+  <circle cx="128" cy="128" r="17" fill="url(#iris)"/>
+  <circle cx="121.5" cy="121.5" r="5" fill="#FFFFFF"/>
+</svg>

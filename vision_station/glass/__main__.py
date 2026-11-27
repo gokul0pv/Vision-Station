@@ -30,6 +30,13 @@ def main(argv=None):
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except Exception:
         QWebEngineView = None
+    if sys.platform == "win32":
+        # its own taskbar button and icon, not Python's
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VisionStation.Glass")
+        except Exception:
+            pass
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication.instance() or QApplication(argv[:1])
     app.setApplicationName("Vision Glass")
@@ -53,6 +60,7 @@ def main(argv=None):
     from PySide6.QtGui import QColor
     view = QWebEngineView()
     view.setWindowTitle("Vision Glass")
+    view.setWindowIcon(icons.app_icon())
     view.page().setBackgroundColor(QColor("#0b0d12"))
     view.resize(1520, 960)
     view.setUrl(QUrl(url))

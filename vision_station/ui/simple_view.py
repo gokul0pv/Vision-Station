@@ -169,10 +169,41 @@ class ModeSwitch(QWidget):
         self.buttons["run"].setChecked(True)
         self._mode = "run"
         self._lock_tips = {}
+        # the white pill under the chosen view, gliding to the next choice
+        # (ui/motion.py); the buttons draw no background of their own then
+        from PySide6.QtWidgets import QFrame
+        self.thumb = QFrame(self)
+        self.thumb.setObjectName("modeThumb")
+        self.thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.thumb.lower()
+        self.setProperty("animated", "true")
+        self.group.buttonToggled.connect(lambda b, on: on and self._place_thumb())
+
+    def _place_thumb(self, now=False):
+        from vision_station.ui import motion
+        b = self.buttons.get(self._mode) or next(
+            (x for x in self.buttons.values() if x.isChecked()), None)
+        if b is None or b.geometry().isEmpty():
+            return
+        rect = b.geometry()
+        if now:
+            self.thumb.setGeometry(rect)
+        else:
+            motion.glide(self.thumb, rect)
+        self.thumb.lower()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_thumb(now=True)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._place_thumb(now=True)
 
     def _clicked(self, key):
         if self.buttons[key].isEnabled():
             self._mode = key
+            self._place_thumb()
             self.changed.emit(key)
         else:
             self.buttons[self._mode].setChecked(True)
@@ -185,6 +216,7 @@ class ModeSwitch(QWidget):
         if key in self.buttons:
             self._mode = key
             self.buttons[key].setChecked(True)
+            self._place_thumb()
 
     def set_locked(self, key, locked, why=""):
         b = self.buttons[key]
@@ -524,6 +556,11 @@ class WelcomePage(QWidget):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(30, 26, 30, 26)
         lay.setSpacing(10)
+        mark = QLabel()
+        mark.setPixmap(icons.app_icon().pixmap(64, 64))
+        mark.setFixedSize(64, 64)
+        mark.setAccessibleName("Vision Station")
+        lay.addWidget(mark)
         t = QLabel("Welcome to Vision Station")
         t.setObjectName("pageTitle")
         s = QLabel("Teach it what a good part looks like, draw the checks, and it tells you "

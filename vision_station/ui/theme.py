@@ -1,7 +1,7 @@
 """Applies the design to the application: light or dark, following Windows
 unless the user chose one.
 
-THE LOOK ITSELF IS IN ui_design.py -- colours, fonts, sizes and the whole
+THE LOOK ITSELF IS IN design.py (and how it moves, in motion.py) -- colours, fonts, sizes and the whole
 stylesheet. This module only applies it, and gives code the few things it
 needs at run time:
 
@@ -128,6 +128,12 @@ def apply(app=None, mode_name="system"):
     if _state["filter"] is None:
         _state["filter"] = _WindowPolish(app)
         app.installEventFilter(_state["filter"])
+        # the design's motion: fades on open and on switch (ui/motion.py)
+        try:
+            from vision_station.ui import motion
+            motion.install(app)
+        except Exception as e:
+            print("[theme] motion not installed: %s" % e)
     for w in app.topLevelWidgets():
         if w.isWindow() and w.isVisible() and not isinstance(w, QMenu):
             ui_design.native_window(w, t, mode_name == "dark")

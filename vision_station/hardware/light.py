@@ -443,6 +443,14 @@ class Light:
         saved = {int(k): int(v) for k, v in (self.cfg.get("home_levels") or {}).items()}
         killed = bool(self.cfg.get("in_use")) and saved and \
             self.cfg.get("home_port") == self.cfg.get("port")
+        if not killed:
+            # Vision Next drives the same controller: stopped without handing
+            # it back, it left its own level there -- the operator's level is
+            # the one it noted down before changing anything
+            owed = {ch: v for ch, v in (next_owes(self.cfg.get("port")) or {}).items()
+                    if ch in self.channels()}
+            if owed:
+                saved, killed = owed, True
         self.found = dict(saved) if killed else dict(now)
         self._home_from_saved = bool(killed) and saved != now
         self.cfg["home_levels"] = {str(k): v for k, v in self.found.items()}
@@ -708,6 +716,26 @@ class Light:
                 self.is_on = None
                 self.sent_level = None
                 self._changed_brightness = False
+
+
+def next_owes(port):
+    """{channel: level} Vision Next noted as the controller's own before it
+    changed the light and has not handed back (vision_next/projects/
+    light_home.json, in_use), for this port; else None."""
+    import json
+    import os
+    from vision_station import paths
+    f = os.environ.get("VS_NEXT_LIGHT_HOME") or os.path.join(
+        paths.ROOT, "vision_next", "projects", "light_home.json")
+    try:
+        with open(f, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not d.get("in_use") or not port or d.get("port") != port:
+        return None
+    out = {i + 1: int(v) for i, v in enumerate(d.get("levels") or []) if v is not None}
+    return out or None
 
 
 def load(qs):

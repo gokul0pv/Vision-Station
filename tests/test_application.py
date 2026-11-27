@@ -2417,8 +2417,13 @@ def test_display_is_downscaled_but_measurement_is_not(ui):
         "a large frame was not downscaled for display (%.2f)" % w.canvas._pix_scale
     assert w.canvas._img.shape == big.shape, \
         "the array handed to the tools was downscaled"
-    rect = w.canvas.sc.sceneRect()
-    assert (rect.width(), rect.height()) == (2200, 1600), \
+    # the scene reaches past the image (so zooming at an edge can keep the
+    # spot under the pointer), but the image itself lies at 0..w, 0..h
+    rect = w.canvas.pix.sceneBoundingRect()
+    assert w.canvas.sc.sceneRect().contains(rect)
+    # (the reduced display copy rounds its height to whole pixels: < 1 px)
+    assert abs(rect.x()) < 1e-6 and abs(rect.y()) < 1e-6 and \
+        abs(rect.width() - 2200) < 1.0 and abs(rect.height() - 1600) < 1.0, \
         "scene coordinates no longer match image pixels: %s" % rect
     w.dirty = False
 

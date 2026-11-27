@@ -1,0 +1,3164 @@
+{
+ "schema": {
+  "align": [
+   {
+    "key": "method",
+    "label": "Search method",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "features",
+     "template"
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_score",
+    "label": "Accept threshold",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     1.0,
+     0.01
+    ],
+    "help": "How closely the part must match the reference, 0 to 1. Lower it if the part is not found; raise it if the wrong place is found."
+   },
+   {
+    "key": "angle_range",
+    "label": "Angle range (deg)",
+    "kind": "intlist",
+    "default": [
+     -5,
+     5
+    ],
+    "extra": null,
+    "help": "How far the part may be turned, in degrees - for example [-5, 5]."
+   },
+   {
+    "key": "angle_step",
+    "label": "Angle step (deg)",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.1,
+     10.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "n_features",
+    "label": "Feature count",
+    "kind": "int",
+    "default": 2000,
+    "extra": [
+     100,
+     20000,
+     100
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_inliers",
+    "label": "Points that must agree (features)",
+    "kind": "int",
+    "default": 12,
+    "extra": [
+     8,
+     500,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "feature_px",
+    "label": "Detect features at (px, long side)",
+    "kind": "int",
+    "default": 1400,
+    "extra": [
+     400,
+     4000,
+     100
+    ],
+    "help": ""
+   }
+  ],
+  "calibrate_scale": [
+   {
+    "key": "known_mm",
+    "label": "Known distance (mm)",
+    "kind": "float",
+    "default": 10.0,
+    "extra": [
+     0.001,
+     10000.0,
+     0.1
+    ],
+    "help": "The real length, in millimetres, of what is inside the box."
+   },
+   {
+    "key": "axis",
+    "label": "Measure along",
+    "kind": "choice",
+    "default": "x",
+    "extra": [
+     "x",
+     "y"
+    ],
+    "help": "Measure left to right (x) or top to bottom (y)."
+   },
+   {
+    "key": "polarity",
+    "label": "Edge polarity",
+    "kind": "choice",
+    "default": "any",
+    "extra": [
+     "any",
+     "dark_to_light",
+     "light_to_dark"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum contrast",
+    "kind": "float",
+    "default": 2.0,
+    "extra": [
+     0.1,
+     100.0,
+     0.1
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   }
+  ],
+  "presence": [
+   {
+    "key": "min_score",
+    "label": "Accept threshold",
+    "kind": "float",
+    "default": 0.65,
+    "extra": [
+     0.0,
+     1.0,
+     0.01
+    ],
+    "help": "How closely it must match the reference, 0 to 1. Lower it if good parts are missed; raise it if wrong parts get through."
+   },
+   {
+    "key": "search_pad",
+    "label": "Search margin (px)",
+    "kind": "int",
+    "default": 15,
+    "extra": [
+     0,
+     500,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "check_seated",
+    "label": "Also check it sits right (lifted, tilted parts fail)",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "Part present on its own asks only whether the part is there, and a lifted, tilted or half-soldered part is. Ticked, the part must also be where it belongs (after Locate part) and look like the reference part all over: a raised end, a missing solder fillet or a shadow under it fails."
+   },
+   {
+    "key": "max_shift",
+    "label": "Largest shift from its place (px, 0 = off)",
+    "kind": "float",
+    "default": 3.0,
+    "extra": [
+     0.0,
+     200.0,
+     0.5
+    ],
+    "help": "How far from its place the part may be found, in pixels, once the board has been located. A part lifted at one end or pushed off its pads moves."
+   },
+   {
+    "key": "max_change",
+    "label": "Largest changed patch (% of the part, 0 = off)",
+    "kind": "float",
+    "default": 4.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.5
+    ],
+    "help": "How large a patch of the part may look different from the reference, as a share of the box. Good pictures in the Train tab raise it to what good parts need on their own."
+   },
+   {
+    "key": "change_level",
+    "label": "Counts as changed from (grey levels)",
+    "kind": "float",
+    "default": 30.0,
+    "extra": [
+     5.0,
+     255.0,
+     1.0
+    ],
+    "help": "How much darker or brighter a pixel must be, after matching overall brightness, to count as changed. Raise it for shiny parts."
+   }
+  ],
+  "count_template": [
+   {
+    "key": "template_roi",
+    "label": "Sample region",
+    "kind": "intlist",
+    "default": null,
+    "extra": null,
+    "help": "One example of the thing to count: its x, y, width and height on the reference image, like [20, 20, 40, 40]."
+   },
+   {
+    "key": "expect_count",
+    "label": "Expected count",
+    "kind": "int",
+    "default": 4,
+    "extra": [
+     0,
+     9999,
+     1
+    ],
+    "help": "How many should be found. Any other number fails the check."
+   },
+   {
+    "key": "min_score",
+    "label": "Accept threshold",
+    "kind": "float",
+    "default": 0.7,
+    "extra": [
+     0.0,
+     1.0,
+     0.01
+    ],
+    "help": "How closely it must match the reference, 0 to 1. Lower it if good parts are missed; raise it if wrong parts get through."
+   },
+   {
+    "key": "overlap",
+    "label": "Overlap reject",
+    "kind": "float",
+    "default": 0.3,
+    "extra": [
+     0.0,
+     1.0,
+     0.05
+    ],
+    "help": ""
+   }
+  ],
+  "count_blob": [
+   {
+    "key": "space",
+    "label": "Channel",
+    "kind": "choice",
+    "default": "hsv_v",
+    "extra": [
+     "gray",
+     "hsv_v",
+     "hsv_s"
+    ],
+    "help": ""
+   },
+   {
+    "key": "threshold",
+    "label": "Threshold",
+    "kind": "text",
+    "default": "otsu",
+    "extra": null,
+    "help": "Brightness that counts as 'lit', 0 to 255 - or 'otsu' to choose it automatically."
+   },
+   {
+    "key": "invert",
+    "label": "Dark features",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "Tick when the things to count are darker than their background."
+   },
+   {
+    "key": "open_px",
+    "label": "Noise filter (px)",
+    "kind": "int",
+    "default": 3,
+    "extra": [
+     0,
+     51,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_area",
+    "label": "Minimum area (px)",
+    "kind": "int",
+    "default": 40,
+    "extra": [
+     1,
+     1000000,
+     5
+    ],
+    "help": "Ignore anything smaller than this many pixels. Raise it to remove noise."
+   },
+   {
+    "key": "max_area",
+    "label": "Maximum area (px)",
+    "kind": "int",
+    "default": 1000000,
+    "extra": [
+     1,
+     100000000,
+     100
+    ],
+    "help": ""
+   },
+   {
+    "key": "expect_count",
+    "label": "Expected count",
+    "kind": "int",
+    "default": 4,
+    "extra": [
+     0,
+     9999,
+     1
+    ],
+    "help": "How many should be found. Any other number fails the check."
+   },
+   {
+    "key": "row_tol",
+    "label": "Row grouping (px)",
+    "kind": "int",
+    "default": 20,
+    "extra": [
+     1,
+     500,
+     1
+    ],
+    "help": ""
+   }
+  ],
+  "color_classify": [
+   {
+    "key": "source",
+    "label": "Read blobs from",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The counting check whose LEDs or blobs this check reads."
+   },
+   {
+    "key": "clip_level",
+    "label": "Treat as blown out above",
+    "kind": "int",
+    "default": 250,
+    "extra": [
+     200,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "halo",
+    "label": "Halo sample width",
+    "kind": "float",
+    "default": 1.8,
+    "extra": [
+     1.1,
+     4.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "expect",
+    "label": "Expected colours",
+    "kind": "strlist",
+    "default": [],
+    "extra": null,
+    "help": "The colours in order, left to right, like [\"red\", \"green\", \"blue\"]."
+   },
+   {
+    "key": "deltaE_max",
+    "label": "Colour tolerance",
+    "kind": "float",
+    "default": 28.0,
+    "extra": [
+     1.0,
+     200.0,
+     1.0
+    ],
+    "help": "How different a colour may be and still count as the same. 30 is forgiving, 10 is strict."
+   }
+  ],
+  "led_glow": [
+   {
+    "key": "source",
+    "label": "Read blobs from",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The counting check whose LEDs or blobs this check reads."
+   },
+   {
+    "key": "v_on",
+    "label": "Brightness for ON",
+    "kind": "int",
+    "default": 140,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "s_on",
+    "label": "Saturation for ON",
+    "kind": "int",
+    "default": 60,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "expect_state",
+    "label": "Expected states",
+    "kind": "boollist",
+    "default": [],
+    "extra": null,
+    "help": "Which LEDs should be on, in order, like [true, true, false]."
+   }
+  ],
+  "defect_diff": [
+   {
+    "key": "threshold",
+    "label": "Difference threshold",
+    "kind": "int",
+    "default": 22,
+    "extra": [
+     1,
+     255,
+     1
+    ],
+    "help": "How much a spot must differ from the reference to count as a mark. Lower it to find fainter marks."
+   },
+   {
+    "key": "illum_blur",
+    "label": "Lighting correction",
+    "kind": "int",
+    "default": 51,
+    "extra": [
+     3,
+     301,
+     2
+    ],
+    "help": ""
+   },
+   {
+    "key": "open_px",
+    "label": "Noise filter (px)",
+    "kind": "int",
+    "default": 2,
+    "extra": [
+     0,
+     51,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_area",
+    "label": "Ignore below (px)",
+    "kind": "int",
+    "default": 25,
+    "extra": [
+     1,
+     100000,
+     5
+    ],
+    "help": "Ignore anything smaller than this many pixels. Raise it to remove noise."
+   },
+   {
+    "key": "scratch_elongation",
+    "label": "Scratch aspect ratio",
+    "kind": "float",
+    "default": 3.5,
+    "extra": [
+     1.0,
+     50.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_defects",
+    "label": "Allowed defects",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     9999,
+     1
+    ],
+    "help": "Marks allowed before the part is rejected."
+   },
+   {
+    "key": "max_area_px",
+    "label": "Allowed defect size",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     1000000,
+     10
+    ],
+    "help": ""
+   }
+  ],
+  "anomaly": [
+   {
+    "key": "backend",
+    "label": "Inference runtime",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "openvino",
+     "onnxruntime"
+    ],
+    "help": ""
+   },
+   {
+    "key": "precision",
+    "label": "Precision",
+    "kind": "choice",
+    "default": "accuracy",
+    "extra": [
+     "accuracy",
+     "speed"
+    ],
+    "help": ""
+   },
+   {
+    "key": "model",
+    "label": "ONNX model file",
+    "kind": "text",
+    "default": "models/anomaly.onnx",
+    "extra": null,
+    "help": "The trained model file, kept in the project's models folder."
+   },
+   {
+    "key": "threshold",
+    "label": "Anomaly threshold",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     10.0,
+     0.01
+    ],
+    "help": "The score above which something is reported."
+   },
+   {
+    "key": "input_size",
+    "label": "Model input size",
+    "kind": "int",
+    "default": 256,
+    "extra": [
+     64,
+     1024,
+     32
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_area",
+    "label": "Ignore below (px)",
+    "kind": "int",
+    "default": 20,
+    "extra": [
+     1,
+     100000,
+     5
+    ],
+    "help": "Ignore anything smaller than this many pixels. Raise it to remove noise."
+   }
+  ],
+  "ocr": [
+   {
+    "key": "expect_contains",
+    "label": "Must contain",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Text that must appear somewhere in what is read. Leave empty to accept whatever is read."
+   },
+   {
+    "key": "compare_barcode",
+    "label": "Compare barcode with barcode scanned",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "With the barcode check on in Settings: what this check reads on the part must be the scanned code, or the part is NG - Barcode not good - and its other checks are skipped. Checking it moves this check to just after the fixture."
+   },
+   {
+    "key": "min_confidence",
+    "label": "Ignore lines read with confidence below",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     1.0,
+     0.05
+    ],
+    "help": "How sure the reader must be of a line, 0 to 1. Lines read with less are left out. Lower it for faint or damaged print."
+   },
+   {
+    "key": "charset",
+    "label": "Allowed characters (empty = any)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Only these characters are kept, like ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 for a serial number. Leave empty to keep everything that is read."
+   },
+   {
+    "key": "min_chars",
+    "label": "Ignore lines shorter than (characters)",
+    "kind": "int",
+    "default": 1,
+    "extra": [
+     1,
+     40,
+     1
+    ],
+    "help": "Ignore anything shorter than this many characters."
+   },
+   {
+    "key": "detail",
+    "label": "Print size",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "fine",
+     "fast"
+    ],
+    "help": "auto suits most print. fine looks twice as closely, for print under about 10 pixels tall - slower. fast makes one pass over the whole region."
+   },
+   {
+    "key": "script",
+    "label": "Script",
+    "kind": "choice",
+    "default": "latin",
+    "extra": [
+     "latin",
+     "any"
+    ],
+    "help": "latin keeps letters, digits and symbols of Latin-script languages. any also keeps Chinese, Japanese and other characters the reader knows."
+   },
+   {
+    "key": "ignore_stray_marks",
+    "label": "Ignore stray marks at the edges",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "A pad, a solder joint or the next part at the edge of the box is sometimes read as a letter, differently on each picture. On, those are left out so one part gives one result every run."
+   }
+  ],
+  "image_process": [
+   {
+    "key": "operator",
+    "label": "Operator",
+    "kind": "choice",
+    "default": "smooth",
+    "extra": [
+     "smooth",
+     "median",
+     "sharpen",
+     "equalize",
+     "threshold",
+     "erode",
+     "dilate",
+     "open",
+     "close",
+     "edges",
+     "invert",
+     "channel",
+     "gain"
+    ],
+    "help": "What to do to the image before the next checks read it."
+   },
+   {
+    "key": "kernel",
+    "label": "Kernel size (px)",
+    "kind": "int",
+    "default": 5,
+    "extra": [
+     1,
+     99,
+     2
+    ],
+    "help": "The size of the filter in pixels. Larger smooths or thickens more."
+   },
+   {
+    "key": "amount",
+    "label": "Amount / gain / clip limit",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.0,
+     20.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "level",
+    "label": "Level / offset",
+    "kind": "float",
+    "default": 128.0,
+    "extra": [
+     -255.0,
+     255.0,
+     1.0
+    ],
+    "help": ""
+   },
+   {
+    "key": "threshold_mode",
+    "label": "Threshold mode",
+    "kind": "choice",
+    "default": "otsu",
+    "extra": [
+     "otsu",
+     "fixed",
+     "adaptive"
+    ],
+    "help": ""
+   },
+   {
+    "key": "iterations",
+    "label": "Morphology iterations",
+    "kind": "int",
+    "default": 1,
+    "extra": [
+     1,
+     20,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "channel",
+    "label": "Channel",
+    "kind": "choice",
+    "default": "green",
+    "extra": [
+     "red",
+     "green",
+     "blue"
+    ],
+    "help": ""
+   }
+  ],
+  "find_line": [
+   {
+    "key": "channel",
+    "label": "Colour channel",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "grey",
+     "red",
+     "green",
+     "blue"
+    ],
+    "help": ""
+   },
+   {
+    "key": "polarity",
+    "label": "Edge polarity",
+    "kind": "choice",
+    "default": "any",
+    "extra": [
+     "any",
+     "dark_to_light",
+     "light_to_dark"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "num_calipers",
+    "label": "Calipers",
+    "kind": "int",
+    "default": 12,
+    "extra": [
+     3,
+     100,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "caliper_width",
+    "label": "Caliper width (px)",
+    "kind": "int",
+    "default": 6,
+    "extra": [
+     1,
+     60,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum edge contrast",
+    "kind": "float",
+    "default": 8.0,
+    "extra": [
+     0.5,
+     200.0,
+     0.5
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "min_found",
+    "label": "Calipers that must agree",
+    "kind": "int",
+    "default": 6,
+    "extra": [
+     3,
+     100,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_rms",
+    "label": "Maximum fit error (px)",
+    "kind": "float",
+    "default": 1.5,
+    "extra": [
+     0.05,
+     20.0,
+     0.05
+    ],
+    "help": ""
+   }
+  ],
+  "find_circle": [
+   {
+    "key": "channel",
+    "label": "Colour channel",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "grey",
+     "red",
+     "green",
+     "blue"
+    ],
+    "help": ""
+   },
+   {
+    "key": "polarity",
+    "label": "Edge polarity (outward)",
+    "kind": "choice",
+    "default": "any",
+    "extra": [
+     "any",
+     "dark_to_light",
+     "light_to_dark"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "num_calipers",
+    "label": "Calipers",
+    "kind": "int",
+    "default": 24,
+    "extra": [
+     6,
+     180,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "search_inner",
+    "label": "Search from (fraction of radius)",
+    "kind": "float",
+    "default": 0.45,
+    "extra": [
+     0.0,
+     0.95,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "search_outer",
+    "label": "Search to (fraction of radius)",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.2,
+     1.0,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum edge contrast",
+    "kind": "float",
+    "default": 8.0,
+    "extra": [
+     0.5,
+     200.0,
+     0.5
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "min_found",
+    "label": "Calipers that must agree",
+    "kind": "int",
+    "default": 10,
+    "extra": [
+     4,
+     180,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_radius",
+    "label": "Minimum radius (px, 0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     5000.0,
+     0.5
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_radius",
+    "label": "Maximum radius (px, 0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     5000.0,
+     0.5
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_rms",
+    "label": "Maximum fit error (px)",
+    "kind": "float",
+    "default": 1.5,
+    "extra": [
+     0.05,
+     20.0,
+     0.05
+    ],
+    "help": ""
+   }
+  ],
+  "caliper": [
+   {
+    "key": "pair_polarity",
+    "label": "Pairs are",
+    "kind": "choice",
+    "default": "dark",
+    "extra": [
+     "dark",
+     "light"
+    ],
+    "help": ""
+   },
+   {
+    "key": "channel",
+    "label": "Colour channel",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "grey",
+     "red",
+     "green",
+     "blue"
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum edge contrast",
+    "kind": "float",
+    "default": 8.0,
+    "extra": [
+     0.5,
+     200.0,
+     0.5
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "expect_count",
+    "label": "Expected pairs (0 = any)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     500,
+     1
+    ],
+    "help": "How many should be found. Any other number fails the check."
+   },
+   {
+    "key": "nominal_width",
+    "label": "Width (mm once calibrated, else px; 0 = any)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     0.01
+    ],
+    "help": "The width of each bar or gap: in millimetres once a Calibrate scale check has run, in pixels before. 0 accepts any width."
+   },
+   {
+    "key": "tolerance",
+    "label": "Width tolerance (same unit)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     0.01
+    ],
+    "help": "How far from that width a pair may be, in the same unit."
+   },
+   {
+    "key": "max_results",
+    "label": "Most pairs to report",
+    "kind": "int",
+    "default": 20,
+    "extra": [
+     1,
+     500,
+     1
+    ],
+    "help": ""
+   }
+  ],
+  "histogram": [
+   {
+    "key": "mean_min",
+    "label": "Mean at least (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     255.0,
+     1.0
+    ],
+    "help": "The average brightness must be at least this. 0 switches the limit off."
+   },
+   {
+    "key": "mean_max",
+    "label": "Mean at most (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     255.0,
+     1.0
+    ],
+    "help": "The average brightness must be at most this. 0 switches the limit off."
+   },
+   {
+    "key": "std_min",
+    "label": "Spread at least (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     128.0,
+     0.5
+    ],
+    "help": ""
+   },
+   {
+    "key": "std_max",
+    "label": "Spread at most (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     128.0,
+     0.5
+    ],
+    "help": ""
+   },
+   {
+    "key": "band_low",
+    "label": "Grey band from",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "band_high",
+    "label": "Grey band to",
+    "kind": "int",
+    "default": 255,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "band_pct_min",
+    "label": "% in band at least (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.5
+    ],
+    "help": ""
+   },
+   {
+    "key": "band_pct_max",
+    "label": "% in band at most (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.5
+    ],
+    "help": ""
+   }
+  ],
+  "distance": [
+   {
+    "key": "first",
+    "label": "First feature (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "A line or circle found by an earlier check."
+   },
+   {
+    "key": "second",
+    "label": "Second feature (tool id, empty = diameter)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "Another line or circle found by an earlier check."
+   },
+   {
+    "key": "min_value",
+    "label": "At least (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     0.01
+    ],
+    "help": "Accept only when at least this. 0 means no lower limit."
+   },
+   {
+    "key": "max_value",
+    "label": "At most (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     0.01
+    ],
+    "help": "Accept only when at most this. 0 means no upper limit."
+   }
+  ],
+  "find_ellipse": [
+   {
+    "key": "channel",
+    "label": "Colour channel",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "grey",
+     "red",
+     "green",
+     "blue"
+    ],
+    "help": ""
+   },
+   {
+    "key": "polarity",
+    "label": "Edge polarity (outward)",
+    "kind": "choice",
+    "default": "any",
+    "extra": [
+     "any",
+     "dark_to_light",
+     "light_to_dark"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "num_calipers",
+    "label": "Calipers",
+    "kind": "int",
+    "default": 36,
+    "extra": [
+     8,
+     180,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "search_inner",
+    "label": "Search from (fraction of size)",
+    "kind": "float",
+    "default": 0.45,
+    "extra": [
+     0.0,
+     0.95,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "search_outer",
+    "label": "Search to (fraction of size)",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.2,
+     1.0,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum edge contrast",
+    "kind": "float",
+    "default": 8.0,
+    "extra": [
+     0.5,
+     200.0,
+     0.5
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "num_to_ignore",
+    "label": "Outliers to ignore",
+    "kind": "int",
+    "default": 4,
+    "extra": [
+     0,
+     90,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_found",
+    "label": "Minimum edge points",
+    "kind": "int",
+    "default": 12,
+    "extra": [
+     6,
+     180,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_rms",
+    "label": "Maximum fit error (px)",
+    "kind": "float",
+    "default": 1.5,
+    "extra": [
+     0.05,
+     20.0,
+     0.05
+    ],
+    "help": ""
+   }
+  ],
+  "sharpness": [
+   {
+    "key": "relative",
+    "label": "Compare with the reference image",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "min_relative",
+    "label": "Focus at least (fraction of reference)",
+    "kind": "float",
+    "default": 0.6,
+    "extra": [
+     0.05,
+     2.0,
+     0.05
+    ],
+    "help": "How sharp the image must be, as a fraction of the reference image."
+   },
+   {
+    "key": "min_sharpness",
+    "label": "Or sharpness at least (absolute)",
+    "kind": "float",
+    "default": 50.0,
+    "extra": [
+     0.0,
+     100000.0,
+     1.0
+    ],
+    "help": ""
+   }
+  ],
+  "color_segment": [
+   {
+    "key": "hue_min",
+    "label": "Hue from (0-179)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     179,
+     1
+    ],
+    "help": "The start of the colour range, 0 to 179 (red is near 0 and 179)."
+   },
+   {
+    "key": "hue_max",
+    "label": "Hue to (0-179; below 'from' wraps past red)",
+    "kind": "int",
+    "default": 179,
+    "extra": [
+     0,
+     179,
+     1
+    ],
+    "help": "The end of the colour range, 0 to 179."
+   },
+   {
+    "key": "sat_min",
+    "label": "Saturation at least",
+    "kind": "int",
+    "default": 60,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "val_min",
+    "label": "Brightness at least",
+    "kind": "int",
+    "default": 40,
+    "extra": [
+     0,
+     255,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_pct",
+    "label": "At least % of the region (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.5
+    ],
+    "help": "At least this much of the box must be that colour. 0 switches it off."
+   },
+   {
+    "key": "max_pct",
+    "label": "At most % of the region (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.5
+    ],
+    "help": "At most this much of the box may be that colour. 0 switches it off."
+   }
+  ],
+  "classify": [
+   {
+    "key": "model",
+    "label": "Classifier model (.onnx)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The trained model file, kept in the project's models folder."
+   },
+   {
+    "key": "classes",
+    "label": "Class names, in order (comma-separated)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "accept",
+    "label": "Accepted classes (comma-separated)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The class names that mean a good part, separated by commas."
+   },
+   {
+    "key": "min_confidence",
+    "label": "Confidence at least",
+    "kind": "float",
+    "default": 0.6,
+    "extra": [
+     0.0,
+     1.0,
+     0.01
+    ],
+    "help": "How sure the reader must be of a line, 0 to 1. Lines read with less are left out. Lower it for faint or damaged print."
+   },
+   {
+    "key": "normalize",
+    "label": "Input normalisation",
+    "kind": "choice",
+    "default": "imagenet",
+    "extra": [
+     "imagenet",
+     "none"
+    ],
+    "help": ""
+   },
+   {
+    "key": "backend",
+    "label": "Inference runtime",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "openvino",
+     "onnxruntime"
+    ],
+    "help": ""
+   },
+   {
+    "key": "precision",
+    "label": "Precision",
+    "kind": "choice",
+    "default": "accuracy",
+    "extra": [
+     "accuracy",
+     "speed"
+    ],
+    "help": ""
+   }
+  ],
+  "affine_transform": [
+   {
+    "key": "scale",
+    "label": "Output scale",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.1,
+     8.0,
+     0.1
+    ],
+    "help": "How much larger the output image is."
+   }
+  ],
+  "polar_unwrap": [
+   {
+    "key": "inner_radius",
+    "label": "Inner radius (fraction of outer)",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     0.95,
+     0.05
+    ],
+    "help": "Where the ring starts, as a fraction of its outer edge."
+   },
+   {
+    "key": "start_angle",
+    "label": "Start angle (deg)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     -360.0,
+     360.0,
+     1.0
+    ],
+    "help": ""
+   },
+   {
+    "key": "sweep",
+    "label": "Sweep (deg)",
+    "kind": "float",
+    "default": 360.0,
+    "extra": [
+     10.0,
+     360.0,
+     5.0
+    ],
+    "help": "How much of the ring to unroll, in degrees."
+   },
+   {
+    "key": "direction",
+    "label": "Direction",
+    "kind": "choice",
+    "default": "clockwise",
+    "extra": [
+     "clockwise",
+     "counterclockwise"
+    ],
+    "help": ""
+   },
+   {
+    "key": "width",
+    "label": "Output width (px, 0 = circumference)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     20000,
+     10
+    ],
+    "help": "The expected width of the bead in pixels."
+   }
+  ],
+  "image_combine": [
+   {
+    "key": "operation",
+    "label": "Operation",
+    "kind": "choice",
+    "default": "difference",
+    "extra": [
+     "difference",
+     "subtract",
+     "subtract_reference_from",
+     "minimum",
+     "maximum",
+     "average"
+    ],
+    "help": "What to make or do."
+   }
+  ],
+  "fixture_npoint": [
+   {
+    "key": "points",
+    "label": "Feature tools (comma-separated ids)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The checks that found the features, separated by commas."
+   },
+   {
+    "key": "max_rms",
+    "label": "Largest point disagreement (px)",
+    "kind": "float",
+    "default": 2.0,
+    "extra": [
+     0.1,
+     50.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_scale_change",
+    "label": "Largest scale change (fraction)",
+    "kind": "float",
+    "default": 0.05,
+    "extra": [
+     0.0,
+     1.0,
+     0.01
+    ],
+    "help": ""
+   }
+  ],
+  "calibrate_npoint": [
+   {
+    "key": "pairs",
+    "label": "Point pairs 'px,py = wx,wy; ...'",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Image points and their real-world positions."
+   },
+   {
+    "key": "max_rms",
+    "label": "Largest fit error (world units)",
+    "kind": "float",
+    "default": 0.05,
+    "extra": [
+     0.0001,
+     100.0,
+     0.001
+    ],
+    "help": ""
+   }
+  ],
+  "construct": [
+   {
+    "key": "operation",
+    "label": "Make",
+    "kind": "choice",
+    "default": "line_through_points",
+    "extra": [
+     "line_through_points",
+     "midpoint",
+     "perpendicular",
+     "parallel",
+     "circle_through_points"
+    ],
+    "help": "What to make or do."
+   },
+   {
+    "key": "first",
+    "label": "First feature (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "A line or circle found by an earlier check."
+   },
+   {
+    "key": "second",
+    "label": "Second feature (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "Another line or circle found by an earlier check."
+   },
+   {
+    "key": "third",
+    "label": "Third feature (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": ""
+   }
+  ],
+  "bead": [
+   {
+    "key": "polarity",
+    "label": "Bead is",
+    "kind": "choice",
+    "default": "dark",
+    "extra": [
+     "dark",
+     "light"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "width",
+    "label": "Expected width (px)",
+    "kind": "float",
+    "default": 12.0,
+    "extra": [
+     1.0,
+     500.0,
+     0.5
+    ],
+    "help": "The expected width of the bead in pixels."
+   },
+   {
+    "key": "width_tolerance",
+    "label": "Width tolerance (px)",
+    "kind": "float",
+    "default": 4.0,
+    "extra": [
+     0.1,
+     200.0,
+     0.5
+    ],
+    "help": "How far from the expected width is still acceptable."
+   },
+   {
+    "key": "max_offset",
+    "label": "Largest offset from the path (px)",
+    "kind": "float",
+    "default": 6.0,
+    "extra": [
+     0.0,
+     200.0,
+     0.5
+    ],
+    "help": "How far the bead may wander from its path, in pixels."
+   },
+   {
+    "key": "stations",
+    "label": "Stations along the path",
+    "kind": "int",
+    "default": 30,
+    "extra": [
+     4,
+     1000,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "search_half_width",
+    "label": "Search either side (px)",
+    "kind": "float",
+    "default": 25.0,
+    "extra": [
+     2.0,
+     500.0,
+     1.0
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum edge contrast",
+    "kind": "float",
+    "default": 15.0,
+    "extra": [
+     1.0,
+     255.0,
+     1.0
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "max_bad_stations",
+    "label": "Bad stations allowed",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     1000,
+     1
+    ],
+    "help": ""
+   }
+  ],
+  "data_analysis": [
+   {
+    "key": "source",
+    "label": "Value to follow (tool.value)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The counting check whose LEDs or blobs this check reads."
+   },
+   {
+    "key": "lower_limit",
+    "label": "Lower limit (empty = none)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The value must stay above this. Leave empty for no lower limit."
+   },
+   {
+    "key": "upper_limit",
+    "label": "Upper limit (empty = none)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The value must stay below this. Leave empty for no upper limit."
+   },
+   {
+    "key": "min_cpk",
+    "label": "Cpk at least (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     10.0,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_samples",
+    "label": "Samples before judging Cpk",
+    "kind": "int",
+    "default": 25,
+    "extra": [
+     2,
+     100000,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "window",
+    "label": "Values kept",
+    "kind": "int",
+    "default": 100,
+    "extra": [
+     2,
+     100000,
+     1
+    ],
+    "help": ""
+   }
+  ],
+  "results_analysis": [
+   {
+    "key": "expression",
+    "label": "Accept when",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Accept when this is true, like count_blob_1.count == 4."
+   }
+  ],
+  "intersect": [
+   {
+    "key": "first",
+    "label": "First line or circle (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "A line or circle found by an earlier check."
+   },
+   {
+    "key": "second",
+    "label": "Second line or circle (tool id)",
+    "kind": "toolref",
+    "default": "",
+    "extra": null,
+    "help": "Another line or circle found by an earlier check."
+   },
+   {
+    "key": "expect_points",
+    "label": "Expected intersections (circles; 0 = any)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     2,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "min_angle",
+    "label": "Angle at least (deg, 0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     180.0,
+     0.1
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_angle",
+    "label": "Angle at most (deg, 0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     180.0,
+     0.1
+    ],
+    "help": ""
+   }
+  ],
+  "fit_shape": [
+   {
+    "key": "fit",
+    "label": "Fit",
+    "kind": "choice",
+    "default": "line",
+    "extra": [
+     "line",
+     "circle",
+     "ellipse"
+    ],
+    "help": "The shape to fit through the points."
+   },
+   {
+    "key": "source",
+    "label": "Centres from (tool id)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The counting check whose LEDs or blobs this check reads."
+   },
+   {
+    "key": "max_deviation",
+    "label": "Largest deviation allowed (0 = off)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     10000.0,
+     0.01
+    ],
+    "help": ""
+   }
+  ],
+  "color_match": [
+   {
+    "key": "max_delta_e",
+    "label": "Largest colour difference (delta E)",
+    "kind": "float",
+    "default": 10.0,
+    "extra": [
+     0.5,
+     100.0,
+     0.5
+    ],
+    "help": "The largest colour difference from the reference still accepted."
+   }
+  ],
+  "trained_surface": [
+   {
+    "key": "method",
+    "label": "Model",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "deep",
+     "statistical"
+    ],
+    "help": "deep learns what good parts look like with a pretrained network: it copes with texture and lighting that differ from part to part. statistical compares pixel by pixel: for parts that repeat exactly. auto uses deep when there are at least 4 OK images, statistical with fewer. Retrain after changing it."
+   },
+   {
+    "key": "deep_sensitivity",
+    "label": "Deep model: threshold scale (1 = as trained)",
+    "kind": "float",
+    "default": 1.0,
+    "extra": [
+     0.3,
+     3.0,
+     0.05
+    ],
+    "help": "Below 1 rejects smaller differences, above 1 only larger ones. No retraining needed."
+   },
+   {
+    "key": "max_clipped",
+    "label": "Overexposed above (fraction clipped at white)",
+    "kind": "float",
+    "default": 0.15,
+    "extra": [
+     0.01,
+     1.0,
+     0.01
+    ],
+    "help": ""
+   },
+   {
+    "key": "resolution",
+    "label": "Model resolution (px, long side)",
+    "kind": "int",
+    "default": 640,
+    "extra": [
+     160,
+     2400,
+     32
+    ],
+    "help": "How finely the surface is modelled. 640 for a region up to about 1300 px; 1600 or more for a whole panel on a 12-megapixel photo, or thin scratches are averaged away. Retrain after changing it."
+   },
+   {
+    "key": "flatten_lighting",
+    "label": "Ignore slow lighting changes",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "Tick when the lamp or the daylight changes between parts: gradual brightness differences are ignored and only local marks count. Retrain after changing it."
+   },
+   {
+    "key": "model",
+    "label": "Trained model (.npz)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The trained model file, kept in the project's models folder."
+   },
+   {
+    "key": "sensitivity_sigma",
+    "label": "Sensitivity (sigma, 0 = as trained)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     12.0,
+     0.5
+    ],
+    "help": "How far from the learned surface counts as a defect. 0 keeps what was learned."
+   },
+   {
+    "key": "max_defect_area",
+    "label": "Allowed defect area (0 = as trained)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     1.0
+    ],
+    "help": ""
+   }
+  ],
+  "ocv": [
+   {
+    "key": "expect_text",
+    "label": "Exact text",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "The exact text expected. Leave it and the pattern empty to accept any text that is read."
+   },
+   {
+    "key": "expect_regex",
+    "label": "Or a pattern",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "A pattern the text must match, when it changes from part to part. [A-Z]{2}[0-9]{6} means two capital letters then six digits."
+   },
+   {
+    "key": "strip_spaces",
+    "label": "Ignore spaces",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "look_alike",
+    "label": "Look-alikes match",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "O and 0, I and 1, S and 5, B and 8, Z and 2 (and i, s, z) count as the same character: the reader confuses them, a marking does not."
+   },
+   {
+    "key": "min_confidence",
+    "label": "Ignore lines read with confidence below",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     1.0,
+     0.05
+    ],
+    "help": "How sure the reader must be of a line, 0 to 1. Lines read with less are left out. Lower it for faint or damaged print."
+   },
+   {
+    "key": "charset",
+    "label": "Allowed characters (empty = any)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Only these characters are kept, like ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 for a serial number. Leave empty to keep everything that is read."
+   },
+   {
+    "key": "min_chars",
+    "label": "Ignore lines shorter than (characters)",
+    "kind": "int",
+    "default": 1,
+    "extra": [
+     1,
+     40,
+     1
+    ],
+    "help": "Ignore anything shorter than this many characters."
+   },
+   {
+    "key": "detail",
+    "label": "Print size",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "fine",
+     "fast"
+    ],
+    "help": "auto suits most print. fine looks twice as closely, for print under about 10 pixels tall - slower. fast makes one pass over the whole region."
+   },
+   {
+    "key": "script",
+    "label": "Script",
+    "kind": "choice",
+    "default": "latin",
+    "extra": [
+     "latin",
+     "any"
+    ],
+    "help": "latin keeps letters, digits and symbols of Latin-script languages. any also keeps Chinese, Japanese and other characters the reader knows."
+   },
+   {
+    "key": "ignore_stray_marks",
+    "label": "Ignore stray marks at the edges",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "A pad, a solder joint or the next part at the edge of the box is sometimes read as a letter, differently on each picture. On, those are left out so one part gives one result every run."
+   }
+  ],
+  "text_detect": [
+   {
+    "key": "expect_contains",
+    "label": "Must contain",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Text that must appear somewhere in what is read. Leave empty to accept whatever is read."
+   },
+   {
+    "key": "min_confidence",
+    "label": "Ignore lines read with confidence below",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     1.0,
+     0.05
+    ],
+    "help": "How sure the reader must be of a line, 0 to 1. Lines read with less are left out. Lower it for faint or damaged print."
+   },
+   {
+    "key": "charset",
+    "label": "Allowed characters (empty = any)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Only these characters are kept, like ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 for a serial number. Leave empty to keep everything that is read."
+   },
+   {
+    "key": "min_chars",
+    "label": "Ignore lines shorter than (characters)",
+    "kind": "int",
+    "default": 1,
+    "extra": [
+     1,
+     40,
+     1
+    ],
+    "help": "Ignore anything shorter than this many characters."
+   },
+   {
+    "key": "detail",
+    "label": "Print size",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "fine",
+     "fast"
+    ],
+    "help": "auto suits most print. fine looks twice as closely, for print under about 10 pixels tall - slower. fast makes one pass over the whole region."
+   },
+   {
+    "key": "script",
+    "label": "Script",
+    "kind": "choice",
+    "default": "latin",
+    "extra": [
+     "latin",
+     "any"
+    ],
+    "help": "latin keeps letters, digits and symbols of Latin-script languages. any also keeps Chinese, Japanese and other characters the reader knows."
+   },
+   {
+    "key": "ignore_stray_marks",
+    "label": "Ignore stray marks at the edges",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "A pad, a solder joint or the next part at the edge of the box is sometimes read as a letter, differently on each picture. On, those are left out so one part gives one result every run."
+   }
+  ],
+  "ocr_auto": [
+   {
+    "key": "expect_contains",
+    "label": "Must contain",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Text that must appear somewhere in what is read. Leave empty to accept whatever is read."
+   },
+   {
+    "key": "min_confidence",
+    "label": "Ignore lines read with confidence below",
+    "kind": "float",
+    "default": 0.5,
+    "extra": [
+     0.0,
+     1.0,
+     0.05
+    ],
+    "help": "How sure the reader must be of a line, 0 to 1. Lines read with less are left out. Lower it for faint or damaged print."
+   },
+   {
+    "key": "charset",
+    "label": "Allowed characters (empty = any)",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "Only these characters are kept, like ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 for a serial number. Leave empty to keep everything that is read."
+   },
+   {
+    "key": "min_chars",
+    "label": "Ignore lines shorter than (characters)",
+    "kind": "int",
+    "default": 1,
+    "extra": [
+     1,
+     40,
+     1
+    ],
+    "help": "Ignore anything shorter than this many characters."
+   },
+   {
+    "key": "detail",
+    "label": "Print size",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "fine",
+     "fast"
+    ],
+    "help": "auto suits most print. fine looks twice as closely, for print under about 10 pixels tall - slower. fast makes one pass over the whole region."
+   },
+   {
+    "key": "script",
+    "label": "Script",
+    "kind": "choice",
+    "default": "latin",
+    "extra": [
+     "latin",
+     "any"
+    ],
+    "help": "latin keeps letters, digits and symbols of Latin-script languages. any also keeps Chinese, Japanese and other characters the reader knows."
+   },
+   {
+    "key": "ignore_stray_marks",
+    "label": "Ignore stray marks at the edges",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "A pad, a solder joint or the next part at the edge of the box is sometimes read as a letter, differently on each picture. On, those are left out so one part gives one result every run."
+   }
+  ],
+  "code_read": [
+   {
+    "key": "compare_barcode",
+    "label": "Compare barcode with barcode scanned",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "With the barcode check on in Settings: what this check reads on the part must be the scanned code, or the part is NG - Barcode not good - and its other checks are skipped. Checking it moves this check to just after the fixture."
+   },
+   {
+    "key": "datamatrix",
+    "label": "Try DataMatrix",
+    "kind": "bool",
+    "default": true,
+    "extra": null,
+    "help": "Also try DataMatrix codes. Slower, so untick it for plain barcodes."
+   },
+   {
+    "key": "timeout_ms",
+    "label": "Decode timeout (ms)",
+    "kind": "int",
+    "default": 800,
+    "extra": [
+     50,
+     10000,
+     50
+    ],
+    "help": ""
+   },
+   {
+    "key": "expect_regex",
+    "label": "Expected pattern",
+    "kind": "text",
+    "default": "",
+    "extra": null,
+    "help": "A pattern the text must match, when it changes from part to part. [A-Z]{2}[0-9]{6} means two capital letters then six digits."
+   }
+  ],
+  "yolo_detect": [
+   {
+    "key": "backend",
+    "label": "Inference runtime",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "openvino",
+     "onnxruntime"
+    ],
+    "help": ""
+   },
+   {
+    "key": "precision",
+    "label": "Precision",
+    "kind": "choice",
+    "default": "accuracy",
+    "extra": [
+     "accuracy",
+     "speed"
+    ],
+    "help": ""
+   },
+   {
+    "key": "model",
+    "label": "Model file (.onnx)",
+    "kind": "text",
+    "default": "models/best.onnx",
+    "extra": null,
+    "help": "The trained model file, kept in the project's models folder."
+   },
+   {
+    "key": "confidence",
+    "label": "Confidence threshold",
+    "kind": "float",
+    "default": 0.35,
+    "extra": [
+     0.05,
+     0.99,
+     0.01
+    ],
+    "help": "Detections scoring below this are ignored, 0 to 1."
+   },
+   {
+    "key": "iou",
+    "label": "Overlap merge (IoU)",
+    "kind": "float",
+    "default": 0.45,
+    "extra": [
+     0.1,
+     0.9,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "expect_counts",
+    "label": "Expected per class",
+    "kind": "text",
+    "default": {},
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "expect_total",
+    "label": "Expected total (0 = any)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     9999,
+     1
+    ],
+    "help": "How many objects should be found. 0 accepts any number."
+   },
+   {
+    "key": "reject_when_found",
+    "label": "Reject the part when anything is found (defect model)",
+    "kind": "bool",
+    "default": false,
+    "extra": null,
+    "help": "For a model trained on defects: finding anything rejects the part, instead of counting what is found."
+   },
+   {
+    "key": "max_defects",
+    "label": "Detections allowed before rejecting",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     999,
+     1
+    ],
+    "help": "Marks allowed before the part is rejected."
+   },
+   {
+    "key": "only_classes",
+    "label": "Only these classes",
+    "kind": "strlist",
+    "default": [],
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "min_area",
+    "label": "Ignore boxes below (px)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     1000000,
+     10
+    ],
+    "help": "Ignore anything smaller than this many pixels. Raise it to remove noise."
+   }
+  ],
+  "yolo_defect": [
+   {
+    "key": "backend",
+    "label": "Inference runtime",
+    "kind": "choice",
+    "default": "auto",
+    "extra": [
+     "auto",
+     "openvino",
+     "onnxruntime"
+    ],
+    "help": ""
+   },
+   {
+    "key": "precision",
+    "label": "Precision",
+    "kind": "choice",
+    "default": "accuracy",
+    "extra": [
+     "accuracy",
+     "speed"
+    ],
+    "help": ""
+   },
+   {
+    "key": "model",
+    "label": "Model file (.onnx)",
+    "kind": "text",
+    "default": "models/best.onnx",
+    "extra": null,
+    "help": "The trained model file, kept in the project's models folder."
+   },
+   {
+    "key": "confidence",
+    "label": "Confidence threshold",
+    "kind": "float",
+    "default": 0.35,
+    "extra": [
+     0.05,
+     0.99,
+     0.01
+    ],
+    "help": "Detections scoring below this are ignored, 0 to 1."
+   },
+   {
+    "key": "iou",
+    "label": "Overlap merge (IoU)",
+    "kind": "float",
+    "default": 0.45,
+    "extra": [
+     0.1,
+     0.9,
+     0.05
+    ],
+    "help": ""
+   },
+   {
+    "key": "max_defects",
+    "label": "Allowed defects",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     999,
+     1
+    ],
+    "help": "Marks allowed before the part is rejected."
+   },
+   {
+    "key": "only_classes",
+    "label": "Only these classes",
+    "kind": "strlist",
+    "default": [],
+    "extra": null,
+    "help": ""
+   },
+   {
+    "key": "min_area",
+    "label": "Ignore boxes below (px)",
+    "kind": "int",
+    "default": 0,
+    "extra": [
+     0,
+     1000000,
+     10
+    ],
+    "help": "Ignore anything smaller than this many pixels. Raise it to remove noise."
+   }
+  ],
+  "measure_length": [
+   {
+    "key": "axis",
+    "label": "Measure along",
+    "kind": "choice",
+    "default": "x",
+    "extra": [
+     "x",
+     "y"
+    ],
+    "help": "Measure left to right (x) or top to bottom (y)."
+   },
+   {
+    "key": "polarity",
+    "label": "Edge polarity",
+    "kind": "choice",
+    "default": "any",
+    "extra": [
+     "any",
+     "dark_to_light",
+     "light_to_dark"
+    ],
+    "help": "Which way the edge goes: dark to light, light to dark, or either."
+   },
+   {
+    "key": "min_contrast",
+    "label": "Minimum contrast",
+    "kind": "float",
+    "default": 2.0,
+    "extra": [
+     0.1,
+     100.0,
+     0.1
+    ],
+    "help": "How strong an edge must be to count. Raise it to ignore faint texture."
+   },
+   {
+    "key": "max_edges",
+    "label": "Edges to find",
+    "kind": "int",
+    "default": 2,
+    "extra": [
+     2,
+     20,
+     1
+    ],
+    "help": ""
+   },
+   {
+    "key": "mm_per_px",
+    "label": "Scale (mm/px, 0=auto)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100.0,
+     0.0001
+    ],
+    "help": ""
+   },
+   {
+    "key": "nominal_mm",
+    "label": "Nominal (mm)",
+    "kind": "float",
+    "default": 0.0,
+    "extra": [
+     0.0,
+     100000.0,
+     0.001
+    ],
+    "help": "The dimension on the drawing, in millimetres."
+   },
+   {
+    "key": "tolerance_mm",
+    "label": "Tolerance (mm)",
+    "kind": "float",
+    "default": 0.05,
+    "extra": [
+     0.0,
+     1000.0,
+     0.001
+    ],
+    "help": "How far from nominal is still acceptable, in millimetres."
+   }
+  ]
+ },
+ "labels": {
+  "align": [
+   "Locate part",
+   "Finds the part and shifts every other region to follow it."
+  ],
+  "calibrate_scale": [
+   "Calibrate scale",
+   "Turns pixels into millimetres from one known dimension."
+  ],
+  "presence": [
+   "Part present",
+   "Checks a feature is there by comparing to the reference."
+  ],
+  "count_template": [
+   "Count by shape",
+   "Counts screws, bolts or any repeated feature."
+  ],
+  "count_blob": [
+   "Count by brightness",
+   "Counts LEDs, holes or pads by thresholding."
+  ],
+  "color_classify": [
+   "LED colour",
+   "Names each LED colour and checks the order."
+  ],
+  "led_glow": [
+   "LED lit state",
+   "Decides whether each LED is on or off."
+  ],
+  "defect_diff": [
+   "Dents and scratches",
+   "Compares against the reference and flags changes."
+  ],
+  "anomaly": [
+   "External anomaly model (earlier recipe)",
+   "Runs an anomalib model exported elsewhere. Use Trained surface check."
+  ],
+  "ocr": [
+   "Read text",
+   "Finds every line of text in the region, at any angle, and reads it."
+  ],
+  "image_process": [
+   "Image processing",
+   "Filters the image for later tools: smooth, sharpen, threshold, morphology..."
+  ],
+  "find_line": [
+   "Find line",
+   "Fits a line through many calipers laid across an edge."
+  ],
+  "find_circle": [
+   "Find circle",
+   "Fits a circle through calipers radiating from the region's centre."
+  ],
+  "caliper": [
+   "Caliper (edge pairs)",
+   "Finds bars or gaps between edge pairs: counts them, measures each width and the pitch."
+  ],
+  "histogram": [
+   "Histogram",
+   "Grey-level statistics over the region, judged against limits."
+  ],
+  "distance": [
+   "Distance / angle",
+   "Measures between features found by other tools."
+  ],
+  "find_ellipse": [
+   "Find ellipse",
+   "Fits an ellipse through calipers radiating from the centre."
+  ],
+  "sharpness": [
+   "Image sharpness",
+   "Is the image in focus - against the reference."
+  ],
+  "color_segment": [
+   "Color segmenter",
+   "How much of the region is within a colour range."
+  ],
+  "classify": [
+   "Classify",
+   "A trained classifier sorts the region into classes."
+  ],
+  "affine_transform": [
+   "Affine transform",
+   "The region resampled upright into an image of its own."
+  ],
+  "polar_unwrap": [
+   "Polar unwrap",
+   "A ring unrolled into a straight strip."
+  ],
+  "image_combine": [
+   "Two-image operation",
+   "The image combined with the reference: difference and more."
+  ],
+  "fixture_npoint": [
+   "Fixture from points",
+   "The part's pose from features other tools found."
+  ],
+  "calibrate_npoint": [
+   "N-point calibration",
+   "Pixels to real-world units from known points."
+  ],
+  "construct": [
+   "Create geometry",
+   "Lines, midpoints and circles made from found features."
+  ],
+  "bead": [
+   "Bead inspect",
+   "A glue bead along a path: present, the right width, in place."
+  ],
+  "data_analysis": [
+   "Data analysis",
+   "A value's statistics over runs: mean, spread, Cpk."
+  ],
+  "results_analysis": [
+   "Results analysis",
+   "Accept or reject from an expression over earlier results."
+  ],
+  "intersect": [
+   "Intersect lines",
+   "The corner where two fitted lines meet, and the angle between them."
+  ],
+  "fit_shape": [
+   "Fit line / circle",
+   "A line or circle through the centres another tool found."
+  ],
+  "color_match": [
+   "Color match",
+   "How far the region's colour is from the reference, as delta E."
+  ],
+  "trained_surface": [
+   "Trained surface check",
+   "Learns the region from OK images; flags anything that deviates."
+  ],
+  "text_detect": [
+   "Read text (earlier recipe)",
+   "Now the same as Read text."
+  ],
+  "ocr_auto": [
+   "Read text (earlier recipe)",
+   "Now the same as Read text."
+  ],
+  "ocv": [
+   "Verify text",
+   "Checks a marking against the exact text or a pattern."
+  ],
+  "code_read": [
+   "Read code",
+   "Decodes DataMatrix, QR and 1D barcodes."
+  ],
+  "yolo_detect": [
+   "Detect with YOLO",
+   "Counts objects, or rejects on defects, using a model you trained."
+  ],
+  "yolo_defect": [
+   "Find defects with YOLO (earlier recipe)",
+   "Now Detect with YOLO, with 'Reject the part when anything is found'."
+  ],
+  "measure_length": [
+   "Measure length",
+   "Subpixel distance between two edges."
+  ]
+ },
+ "groups": [
+  [
+   "Image",
+   [
+    "image_process",
+    "affine_transform",
+    "polar_unwrap",
+    "image_combine",
+    "sharpness"
+   ]
+  ],
+  [
+   "Locate",
+   [
+    "fixture_npoint",
+    "calibrate_npoint",
+    "align",
+    "calibrate_scale"
+   ]
+  ],
+  [
+   "Presence and count",
+   [
+    "presence",
+    "count_template",
+    "count_blob"
+   ]
+  ],
+  [
+   "Colour",
+   [
+    "color_match",
+    "color_segment",
+    "color_classify",
+    "led_glow"
+   ]
+  ],
+  [
+   "Geometry",
+   [
+    "find_line",
+    "find_circle",
+    "find_ellipse",
+    "caliper",
+    "fit_shape",
+    "intersect",
+    "construct",
+    "distance"
+   ]
+  ],
+  [
+   "Surface",
+   [
+    "trained_surface",
+    "defect_diff",
+    "bead",
+    "histogram"
+   ]
+  ],
+  [
+   "Trained models",
+   [
+    "classify",
+    "yolo_detect"
+   ]
+  ],
+  [
+   "Text and codes",
+   [
+    "ocr",
+    "ocv",
+    "code_read"
+   ]
+  ],
+  [
+   "Logic",
+   [
+    "results_analysis",
+    "data_analysis"
+   ]
+  ],
+  [
+   "Measurement",
+   [
+    "measure_length"
+   ]
+  ]
+ ],
+ "questions": [
+  [
+   "Is the part where it should be?",
+   "Find the part first, so every other check follows it when a part arrives shifted or turned.",
+   [
+    "align",
+    "calibrate_scale",
+    "fixture_npoint",
+    "calibrate_npoint"
+   ]
+  ],
+  [
+   "Is something there, and how many?",
+   "A component that must be fitted, screws that must all be present, LEDs or holes to count.",
+   [
+    "presence",
+    "count_template",
+    "count_blob",
+    "yolo_detect"
+   ]
+  ],
+  [
+   "Is the text or code right?",
+   "Lot codes, serial numbers, date stamps, barcodes and DataMatrix.",
+   [
+    "ocr",
+    "ocv",
+    "code_read"
+   ]
+  ],
+  [
+   "Are the colours right? Are the LEDs on?",
+   "Colour of a part or a label, the colour and state of each LED.",
+   [
+    "color_classify",
+    "led_glow",
+    "color_match",
+    "color_segment"
+   ]
+  ],
+  [
+   "Is the surface clean?",
+   "Scratches, dents, marks, missing glue, anything that differs from a good part.",
+   [
+    "defect_diff",
+    "trained_surface",
+    "yolo_detect",
+    "bead",
+    "histogram"
+   ]
+  ],
+  [
+   "Is a size or position within tolerance?",
+   "Lengths, widths, diameters, gaps and angles, in pixels or millimetres.",
+   [
+    "measure_length",
+    "caliper",
+    "find_line",
+    "find_circle",
+    "distance",
+    "find_ellipse",
+    "intersect",
+    "fit_shape",
+    "construct"
+   ]
+  ],
+  [
+   "More",
+   "Image preparation, trained classifiers and logic over the other checks' results.",
+   [
+    "image_process",
+    "sharpness",
+    "classify",
+    "results_analysis",
+    "data_analysis",
+    "affine_transform",
+    "polar_unwrap",
+    "image_combine"
+   ]
+  ]
+ ],
+ "advanced": [
+  "affine_transform",
+  "bead",
+  "calibrate_npoint",
+  "classify",
+  "color_segment",
+  "construct",
+  "data_analysis",
+  "find_ellipse",
+  "fit_shape",
+  "fixture_npoint",
+  "histogram",
+  "image_combine",
+  "intersect",
+  "polar_unwrap",
+  "results_analysis",
+  "sharpness"
+ ],
+ "essential": {
+  "align": [
+   "min_score",
+   "angle_range"
+  ],
+  "calibrate_scale": [
+   "known_mm",
+   "axis"
+  ],
+  "presence": [
+   "min_score",
+   "check_seated"
+  ],
+  "count_template": [
+   "expect_count",
+   "template_roi",
+   "min_score"
+  ],
+  "count_blob": [
+   "expect_count",
+   "threshold",
+   "invert",
+   "min_area"
+  ],
+  "color_classify": [
+   "expect",
+   "deltaE_max",
+   "source"
+  ],
+  "led_glow": [
+   "expect_state",
+   "source"
+  ],
+  "defect_diff": [
+   "threshold",
+   "min_area",
+   "max_defects"
+  ],
+  "anomaly": [
+   "model",
+   "threshold"
+  ],
+  "ocr": [
+   "expect_contains",
+   "compare_barcode",
+   "min_confidence"
+  ],
+  "ocv": [
+   "expect_text",
+   "expect_regex",
+   "min_confidence"
+  ],
+  "ocr_auto": [
+   "expect_contains",
+   "min_confidence"
+  ],
+  "text_detect": [
+   "expect_contains",
+   "min_confidence"
+  ],
+  "code_read": [
+   "compare_barcode",
+   "expect_regex",
+   "datamatrix"
+  ],
+  "measure_length": [
+   "nominal_mm",
+   "tolerance_mm",
+   "axis"
+  ],
+  "caliper": [
+   "expect_count",
+   "nominal_width",
+   "tolerance"
+  ],
+  "find_line": [
+   "polarity",
+   "min_contrast"
+  ],
+  "find_circle": [
+   "polarity",
+   "min_contrast"
+  ],
+  "find_ellipse": [
+   "polarity",
+   "min_contrast"
+  ],
+  "distance": [
+   "first",
+   "second",
+   "min_value",
+   "max_value"
+  ],
+  "histogram": [
+   "mean_min",
+   "mean_max"
+  ],
+  "color_match": [
+   "max_delta_e"
+  ],
+  "color_segment": [
+   "hue_min",
+   "hue_max",
+   "min_pct",
+   "max_pct"
+  ],
+  "classify": [
+   "model",
+   "accept",
+   "min_confidence"
+  ],
+  "yolo_detect": [
+   "model",
+   "confidence",
+   "expect_total",
+   "reject_when_found"
+  ],
+  "yolo_defect": [
+   "model",
+   "confidence",
+   "max_defects"
+  ],
+  "trained_surface": [
+   "method",
+   "resolution",
+   "deep_sensitivity",
+   "model"
+  ],
+  "sharpness": [
+   "min_relative"
+  ],
+  "bead": [
+   "width",
+   "width_tolerance",
+   "max_offset"
+  ],
+  "image_process": [
+   "operator",
+   "kernel"
+  ],
+  "results_analysis": [
+   "expression"
+  ],
+  "data_analysis": [
+   "source",
+   "lower_limit",
+   "upper_limit"
+  ],
+  "intersect": [
+   "first",
+   "second"
+  ],
+  "fit_shape": [
+   "fit",
+   "source"
+  ],
+  "construct": [
+   "operation",
+   "first",
+   "second"
+  ],
+  "fixture_npoint": [
+   "points"
+  ],
+  "calibrate_npoint": [
+   "pairs"
+  ],
+  "affine_transform": [
+   "scale"
+  ],
+  "polar_unwrap": [
+   "inner_radius",
+   "sweep"
+  ],
+  "image_combine": [
+   "operation"
+  ]
+ },
+ "legacy": {
+  "text_detect": "ocr",
+  "ocr_auto": "ocr",
+  "yolo_defect": "yolo_detect",
+  "anomaly": "trained_surface"
+ },
+ "common_help": {
+  "critical": "",
+  "enabled": "",
+  "angle": "",
+  "shape": "",
+  "capture": ""
+ }
+}

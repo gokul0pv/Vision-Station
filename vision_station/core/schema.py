@@ -26,6 +26,12 @@ TEXT_ROWS = [
 ]
 CHANNEL_ROW = ("channel", "Colour channel", "choice", "auto",
                ["auto", "grey", "red", "green", "blue"])
+# Read text and Read code both compare what they read with the scanned barcode.
+BARCODE_ROW = ("compare_barcode", "Compare barcode with barcode scanned", "bool", False, None)
+# Graphics card or not is one choice for the whole application (Settings >
+# General shows what this PC uses; VS_DEVICE overrides it). A "Use GPU if
+# available" box in each AI check said the same thing again, differently for
+# each check -- and off by default, so a check could quietly differ.
 
 SCHEMA = {
     "align": [
@@ -46,6 +52,14 @@ SCHEMA = {
     "presence": [
         ("min_score", "Accept threshold", "float", 0.65, (0.0, 1.0, 0.01)),
         ("search_pad", "Search margin (px)", "int", 15, (0, 500, 1)),
+        ("check_seated", "Also check it sits right (lifted, tilted parts fail)", "bool", False,
+         None),
+        ("max_shift", "Largest shift from its place (px, 0 = off)", "float", 3.0,
+         (0.0, 200.0, 0.5)),
+        ("max_change", "Largest changed patch (% of the part, 0 = off)", "float", 4.0,
+         (0.0, 100.0, 0.5)),
+        ("change_level", "Counts as changed from (grey levels)", "float", 30.0,
+         (5.0, 255.0, 1.0)),
     ],
     "count_template": [
         ("template_roi", "Sample region", "intlist", None, None),
@@ -91,11 +105,10 @@ SCHEMA = {
         ("threshold", "Anomaly threshold", "float", 0.50, (0.0, 10.0, 0.01)),
         ("input_size", "Model input size", "int", 256, (64, 1024, 32)),
         ("min_area", "Ignore below (px)", "int", 20, (1, 100000, 5)),
-        ("use_gpu", "Use GPU if available", "bool", False, None),
     ],
     "ocr": [
         ("expect_contains", "Must contain", "text", "", None),
-        ("compare_barcode", "Compare barcode with barcode scanned", "bool", False, None),
+        BARCODE_ROW,
         *TEXT_ROWS,
     ],
     "image_process": [
@@ -136,11 +149,12 @@ SCHEMA = {
         ("pair_polarity", "Pairs are", "choice", "dark", ["dark", "light"]),
         CHANNEL_ROW,
         ("min_contrast", "Minimum edge contrast", "float", 8.0, (0.5, 200.0, 0.5)),
-        ("expected_width", "Expected width (px, 0 = any)", "float", 0.0, (0.0, 5000.0, 0.5)),
-        ("width_tolerance", "Accept widths within (px, 0 = any)", "float", 0.0, (0.0, 5000.0, 0.5)),
         ("expect_count", "Expected pairs (0 = any)", "int", 0, (0, 500, 1)),
-        ("nominal_width", "Nominal width (0 = off)", "float", 0.0, (0.0, 100000.0, 0.01)),
-        ("tolerance", "Width tolerance", "float", 0.0, (0.0, 100000.0, 0.01)),
+        # one width: it had two -- "expected width" (px, dropped pairs of
+        # another width) and "nominal width" (mm once calibrated, failed them)
+        ("nominal_width", "Width (mm once calibrated, else px; 0 = any)", "float", 0.0,
+         (0.0, 100000.0, 0.01)),
+        ("tolerance", "Width tolerance (same unit)", "float", 0.0, (0.0, 100000.0, 0.01)),
         ("max_results", "Most pairs to report", "int", 20, (1, 500, 1)),
     ],
     "histogram": [
@@ -290,7 +304,7 @@ SCHEMA = {
         *TEXT_ROWS,
     ],
     "code_read": [
-        ("compare_barcode", "Compare barcode with barcode scanned", "bool", False, None),
+        BARCODE_ROW,
         ("datamatrix", "Try DataMatrix", "bool", True, None),
         ("timeout_ms", "Decode timeout (ms)", "int", 800, (50, 10000, 50)),
         ("expect_regex", "Expected pattern", "text", "", None),
@@ -307,7 +321,6 @@ SCHEMA = {
         ("max_defects", "Detections allowed before rejecting", "int", 0, (0, 999, 1)),
         ("only_classes", "Only these classes", "strlist", [], None),
         ("min_area", "Ignore boxes below (px)", "int", 0, (0, 1000000, 10)),
-        ("use_gpu", "Use GPU if available", "bool", False, None),
     ],
     "yolo_defect": [
         *INFERENCE_ROWS,
@@ -317,7 +330,6 @@ SCHEMA = {
         ("max_defects", "Allowed defects", "int", 0, (0, 999, 1)),
         ("only_classes", "Only these classes", "strlist", [], None),
         ("min_area", "Ignore boxes below (px)", "int", 0, (0, 1000000, 10)),
-        ("use_gpu", "Use GPU if available", "bool", False, None),
     ],
     "measure_length": [
         ("axis", "Measure along", "choice", "x", ["x", "y"]),
@@ -461,7 +473,7 @@ ADVANCED_TYPES = {
 ESSENTIAL = {
     "align": ["min_score", "angle_range"],
     "calibrate_scale": ["known_mm", "axis"],
-    "presence": ["min_score"],
+    "presence": ["min_score", "check_seated"],
     "count_template": ["expect_count", "template_roi", "min_score"],
     "count_blob": ["expect_count", "threshold", "invert", "min_area"],
     "color_classify": ["expect", "deltaE_max", "source"],
@@ -474,7 +486,7 @@ ESSENTIAL = {
     "text_detect": ["expect_contains", "min_confidence"],
     "code_read": ["compare_barcode", "expect_regex", "datamatrix"],
     "measure_length": ["nominal_mm", "tolerance_mm", "axis"],
-    "caliper": ["expect_count", "expected_width", "width_tolerance"],
+    "caliper": ["expect_count", "nominal_width", "tolerance"],
     "find_line": ["polarity", "min_contrast"],
     "find_circle": ["polarity", "min_contrast"],
     "find_ellipse": ["polarity", "min_contrast"],
@@ -514,6 +526,17 @@ HELP = {
     "ignore_stray_marks": "A pad, a solder joint or the next part at the edge of the box is "
                           "sometimes read as a letter, differently on each picture. On, those "
                           "are left out so one part gives one result every run.",
+    "check_seated": "Part present on its own asks only whether the part is there, and a "
+                    "lifted, tilted or half-soldered part is. Ticked, the part must also be "
+                    "where it belongs (after Locate part) and look like the reference part all "
+                    "over: a raised end, a missing solder fillet or a shadow under it fails.",
+    "max_shift": "How far from its place the part may be found, in pixels, once the board has "
+                 "been located. A part lifted at one end or pushed off its pads moves.",
+    "max_change": "How large a patch of the part may look different from the reference, as a "
+                  "share of the box. Good pictures in the Train tab raise it to what good parts "
+                  "need on their own.",
+    "change_level": "How much darker or brighter a pixel must be, after matching overall "
+                    "brightness, to count as changed. Raise it for shiny parts.",
     "min_score": "How closely it must match the reference, 0 to 1. Lower it if good parts are "
                  "missed; raise it if wrong parts get through.",
     ("align", "min_score"): "How closely the part must match the reference, 0 to 1. Lower it if "
@@ -561,7 +584,9 @@ HELP = {
     "expect_total": "How many objects should be found. 0 accepts any number.",
     "max_delta_e": "The largest colour difference from the reference still accepted.",
     "expression": "Accept when this is true, like count_blob_1.count == 4.",
-    "expected_width": "The width of each bar or gap in pixels. 0 accepts any width.",
+    ("caliper", "nominal_width"): "The width of each bar or gap: in millimetres once a Calibrate "
+                                  "scale check has run, in pixels before. 0 accepts any width.",
+    ("caliper", "tolerance"): "How far from that width a pair may be, in the same unit.",
     "width_tolerance": "How far from the expected width is still acceptable.",
     "min_value": "Accept only when at least this. 0 means no lower limit.",
     "max_value": "Accept only when at most this. 0 means no upper limit.",

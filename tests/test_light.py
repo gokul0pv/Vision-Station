@@ -410,7 +410,7 @@ def test_settle_waits_only_for_what_is_left():
 
 
 def test_a_shiny_teach_picture_does_not_turn_the_light_down():
-    ref = _picture(0.43, clipped=0.06)                   # the uop teach picture: 6 % white
+    ref = _picture(0.43, clipped=0.06)                   # a real job's teach picture: 6 % white
     cfg = {"target": "reference", "max_clipped": 0.5}
     assert L.clip_limit(cfg, ref) > 0.07
     assert L.next_level(200, 0.43, 0.05, 0.43, L.clip_limit(cfg, ref)) == 200
@@ -715,3 +715,31 @@ def test_settings_applied_keep_what_is_owed(qb, qapp):
     dlg._ok()
     saved = light.load(qb._settings())
     assert saved["in_use"] and saved["home_levels"] == {"1": 0}, saved
+
+
+@pytest.fixture(autouse=True)
+def _no_vision_next_note(tmp_path, monkeypatch):
+    """Vision Next's own light note (vision_next/projects/light_home.json)
+    never reaches these tests unless a test writes one."""
+    monkeypatch.setenv("VS_NEXT_LIGHT_HOME", str(tmp_path / "next_light_home.json"))
+
+
+def test_vision_next_stopped_without_handing_back(tmp_path, monkeypatch):
+    """The operator leaves the controller at 0. Vision Next sets its level
+    (128), is stopped without handing back, and the controller keeps 128.
+    Vision Station must hand back 0 -- what Vision Next noted down before
+    it changed anything -- not the 128 it finds."""
+    import json
+    note = tmp_path / "owed.json"
+    note.write_text(json.dumps({"port": "COM7", "levels": [0, 255], "in_use": True}))
+    monkeypatch.setenv("VS_NEXT_LIGHT_HOME", str(note))
+    dev = FakeController(level=128)
+    store = Store({"enabled": True, "port": "COM7", "always_on": False})
+    s = store.session(dev)
+    assert s.found == {1: 0}, "took Vision Next's leftover 128 for the operator's level"
+    s.shutdown()
+    assert dev.level[1] == 0 and dev.on[1]
+    # a note for another port, or one handed back, is not owed here
+    note.write_text(json.dumps({"port": "COM3", "levels": [0], "in_use": True}))
+    dev.level[1] = 128
+    assert store.session(dev).found == {1: 128}

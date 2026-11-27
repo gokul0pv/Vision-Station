@@ -604,8 +604,9 @@ def warm(projects):
                     continue
                 try:
                     x, y, w, h = [int(v) for v in roi]
-                    tpl = count._gray(ref[max(0, y):y + h, max(0, x):x + w])
-                    count.training_examples(p.folder, t["id"], [x, y, w, h], tpl)
+                    ang = float(t["params"].get("angle", 0.0) or 0.0)
+                    tpl = count.upright(ref, [x, y, w, h], ang)
+                    count.training_examples(p.folder, t["id"], [x, y, w, h], tpl, ang)
                 except Exception:
                     pass
             count.release_pictures()
@@ -1003,10 +1004,35 @@ class Session:
         # about 2400 steps in all: enough for one board, a few minutes on a GPU
         return int(max(15, min(60, round(2400.0 / max(1, batches)))))
 
+    def _warm_start(self, base):
+        """The job's own last model, when it was taught with the same
+        starting network: a re-teach after a few checks changed starts from
+        what the network already knows of this board instead of from COCO,
+        and needs about half the epochs. Validation afterwards is the same,
+        so a model that did not learn the changes is still refused."""
+        pt = os.path.join(self.adv, "model.pt")
+        if self.epochs or not os.path.isfile(pt):
+            return None
+        try:
+            with open(os.path.join(self.adv, "model.json"), encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if meta.get("base") != os.path.basename(base) or meta.get("imgsz") != IMGSZ or \
+                meta.get("classes") != CLASSES:
+            return None
+        return pt
+
     def _train(self, data):
         base, batch = base_weights(self.model_size)
+        self.base_name = os.path.basename(base)
         batches = max(1, int(np.ceil(self.tiles["train"] / float(batch))))
         epochs = self._epochs_for(batches)
+        warm = self._warm_start(base)
+        if warm:
+            base = warm
+            epochs = max(12, int(round(0.5 * epochs)))
+            self._set(detail="starting from this job's last model")
         for attempt in range(3):
             self._check()
             out = os.path.join(self.new, "runs")
@@ -1170,8 +1196,14 @@ class Session:
         tmp = os.path.join(adv, "model.onnx.tmp")
         shutil.copyfile(onnx, tmp)
         os.replace(tmp, model_path(self.folder))
+        # its weights, for the next teaching run to start from (_warm_start)
+        pt = os.path.splitext(onnx)[0] + ".pt"
+        if os.path.isfile(pt):
+            shutil.copyfile(pt, os.path.join(adv, "model.pt.tmp"))
+            os.replace(os.path.join(adv, "model.pt.tmp"), os.path.join(adv, "model.pt"))
         learned = {it["id"]: it["cls"] for it in items if it["id"] in val["learned"]}
         meta = {"classes": CLASSES, "zoom": zoom, "imgsz": IMGSZ, "min_conf": AI_MIN,
+                "base": getattr(self, "base_name", ""),
                 "tools": learned, "trained_at": time.time(), "metrics": metrics,
                 "validation": {k: v for k, v in val.items()
                                if k not in ("conf_min", "thresholds")},

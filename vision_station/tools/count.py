@@ -9,6 +9,77 @@ def _gray(i):
     return cv2.cvtColor(i, cv2.COLOR_BGR2GRAY) if i.ndim == 3 else i
 
 
+def upright(img, roi, angle=0.0, margin=0):
+    """The region [x, y, w, h] turned by `angle` degrees about its centre (as
+    every check's region is), cut out upright, `margin` px wider on every
+    side; grey. Unturned it is a plain slice, clipped to the picture.
+
+    A turned Part present check cut its search window upright (Tool.crop)
+    but its reference patch as the plain unturned box, so it compared the
+    part with a turned copy of itself and good parts scored low."""
+    x, y, w, h = [int(v) for v in roi]
+    if abs(float(angle or 0.0)) < 1e-6:
+        H, W = img.shape[:2]
+        x0, y0 = max(0, x - margin), max(0, y - margin)
+        return _gray(img[y0:min(H, y + h + margin), x0:min(W, x + w + margin)])
+    import math
+    a = math.radians(float(angle))
+    ca, sa = math.cos(a), math.sin(a)
+    sw, sh = w + 2 * margin, h + 2 * margin
+    cx, cy = x + w / 2.0, y + h / 2.0
+    # output pixel (u, v) samples the picture at centre + R(angle) (u - sw/2, v - sh/2)
+    M = np.float32([[ca, -sa, cx - ca * sw / 2.0 + sa * sh / 2.0],
+                    [sa, ca, cy - sa * sw / 2.0 - ca * sh / 2.0]])
+    return cv2.warpAffine(_gray(img), M, (sw, sh), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
+# How much a seated part may look different from the reference part. A part
+# lifted at one end, tilted, or not sitting on its solder still matches its
+# reference well enough to be "there" -- and the AI, taught what a part looks
+# like, finds it too: both answer "present", which it is. What does change is
+# where it sits, and how part of it looks: the raised end catches the light
+# differently, the solder fillet under it is gone, a shadow appears.
+CHANGE_LEVEL = 30.0         # grey levels, after matching brightness and contrast
+
+
+def change_share(found, tpl, level=CHANGE_LEVEL):
+    """(share, mask): the largest connected patch of `found` that differs
+    from `tpl` (same size, grey) by more than `level` grey levels, as a share
+    of the region, and where it is (uint8 mask). Brightness and contrast are
+    matched first (a lamp a little brighter changes nothing), and each pixel
+    is compared with the best of its 3 x 3 neighbours in the reference, so a
+    part found half a pixel away does not light up along every edge."""
+    if found.shape != tpl.shape or found.size == 0:
+        return 0.0, None
+    a = found.astype(np.float32)
+    b = tpl.astype(np.float32)
+    # brightness and contrast from the 10th and 90th percentiles, not the
+    # mean and spread: a dark patch on a fifth of the part raised the spread,
+    # the contrast was turned down to match, and the patch all but vanished
+    a10, a90 = np.percentile(a, (10, 90))
+    b10, b90 = np.percentile(b, (10, 90))
+    gain = float(b90 - b10) / float(a90 - a10) if a90 - a10 > 4.0 else 1.0
+    gain = min(2.0, max(0.5, gain))
+    a = (a - float(a10)) * gain + float(b10)
+    h, w = b.shape
+    bp = cv2.copyMakeBorder(b, 1, 1, 1, 1, cv2.BORDER_REPLICATE)
+    d = None
+    for dy in range(3):
+        for dx in range(3):
+            e = np.abs(a - bp[dy:dy + h, dx:dx + w])
+            d = e if d is None else np.minimum(d, e)
+    d = cv2.GaussianBlur(d, (3, 3), 0)
+    m = (d > float(level)).astype(np.uint8)
+    if min(h, w) >= 12:
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, lab, stats, _c = cv2.connectedComponentsWithStats(m, 8)
+    if n <= 1:
+        return 0.0, m
+    k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return float(stats[k, cv2.CC_STAT_AREA]) / float(w * h), (lab == k).astype(np.uint8)
+
+
 @register("count_template")
 class CountTemplate(Tool):
     """Multi-instance normalised-correlation match. Give it one screw head from
@@ -22,7 +93,11 @@ class CountTemplate(Tool):
                               message="set Sample region: x, y, w, h of one example to count, "
                                       "on the reference image")
         tx, ty, tw, th = tr
-        tpl = _gray(ctx.reference[ty:ty + th, tx:tx + tw])
+        # the sample turned with the region: the search window is cut upright
+        # to a turned region, so the parts in it are turned back -- a sample
+        # cut unturned no longer looked like them
+        tpl = upright(ctx.reference, [tx, ty, tw, th], self.angle)
+        th, tw = tpl.shape[:2]
         search, (ox, oy) = self.crop(image, ctx)
         sg = _gray(search)
         if sg.shape[0] < th or sg.shape[1] < tw:
@@ -200,10 +275,11 @@ def _best_sim(win, patch):
     return float(sim), win[loc[1]:loc[1] + ph, loc[0]:loc[0] + pw]
 
 
-def training_examples(folder, tool_id, roi, tpl):
+def training_examples(folder, tool_id, roi, tpl, angle=0.0):
     """[(label, path, patch)] -- each OK / NG training picture's patch for
     this region, found where the region's reference content is in it (a
-    picture of a board lying a little differently still lines up)."""
+    picture of a board lying a little differently still lines up). A turned
+    region's patches are cut upright, as its reference patch is."""
     import glob
     import os
     if not folder:
@@ -219,7 +295,8 @@ def training_examples(folder, tool_id, roi, tpl):
                     pass
     if not files:
         return []
-    key = (base, tuple(roi), tpl.shape, tuple(files))
+    angle = float(angle or 0.0)
+    key = (base, tuple(roi), round(angle, 3), tpl.shape, tuple(files))
     hit = _EXAMPLES.get(key)
     if hit is not None:
         return hit
@@ -231,10 +308,11 @@ def training_examples(folder, tool_id, roi, tpl):
         img, th_img = _picture(f)
         if img is None:
             continue
-        H, W = img.shape[:2]
-        x0, y0 = max(0, x - margin), max(0, y - margin)
-        x1, y1 = min(W, x + w + margin), min(H, y + h + margin)
-        win = _gray(img[y0:y1, x0:x1])
+        if abs(angle) > 1e-6:
+            x0, y0 = x - margin, y - margin
+        else:
+            x0, y0 = max(0, x - margin), max(0, y - margin)
+        win = upright(img, roi, angle, margin)
         if win.shape[0] < th or win.shape[1] < tw:
             continue
         method = cv2.TM_CCOEFF_NORMED if float(tpl.std()) >= 1e-6 else cv2.TM_SQDIFF
@@ -268,12 +346,22 @@ class Presence(Tool):
         x, y, w, h = self.roi
         # the region alone made grey: the whole 20-megapixel reference was
         # converted for every check, 2-3 ms each, every cycle
-        tpl = _gray(ctx.reference[max(0, y):y + h, max(0, x):x + w])
+        # cut upright when the region is turned, as the search window is
+        tpl = upright(ctx.reference, [x, y, w, h], self.angle)
         pad = int(self.p.get("search_pad", 15))
         self.roi = [x - pad, y - pad, w + 2 * pad, h + 2 * pad]
-        crop, (ox, oy) = self.crop(image, ctx)
-        self.roi = [x, y, w, h]
+        try:
+            crop, (ox, oy) = self.crop(image, ctx)
+        finally:
+            self.roi = [x, y, w, h]
         cg = _gray(crop)
+        # where the part belongs in the search window: the window's middle,
+        # unless a plain slice was clipped at the picture's edge
+        if self._crop_M is None:
+            ex0, ey0 = (self.mapped_roi(ctx) or (x, y))[:2]
+            home = (ex0 - ox, ey0 - oy)
+        else:
+            home = (pad, pad)
         if cg.shape[0] < h or cg.shape[1] < w:
             return ToolResult(self.id, self.type_name, "error", message="search window too small")
         # A region with no texture cannot be judged by correlation. Normalised
@@ -301,7 +389,8 @@ class Presence(Tool):
         # picture added under NG -- even the reference itself -- still
         # passed, and "Test" reported it as an escape.
         ok_best, ng_best, ng_path = float(mx), 0.0, ""
-        examples = training_examples(getattr(ctx, "folder", ""), self.id, [x, y, w, h], tpl)
+        examples = training_examples(getattr(ctx, "folder", ""), self.id, [x, y, w, h], tpl,
+                                     self.angle)
         same_ng = ""
         if any(e[0] == "ng" for e in examples):
             share = getattr(ctx, "share", None)
@@ -353,27 +442,122 @@ class Presence(Tool):
             # example it resembles, so "Tune threshold" counts it as bad
             mx = min(ok_best, max(0.0, 1.0 - ng_best)) \
                 if (why.startswith("looks like") or same_ng) else ok_best
+        from .geometry import _ToImage
+        to_img = _ToImage(self, ox, oy)
+        th, tw = tpl.shape[:2]
+        shift = float(np.hypot(loc[0] - home[0], loc[1] - home[1]))
+        seat = {}
+        changed = None
+        if ok and self.p.get("check_seated", False):
+            seat, changed = self._seated(cg, tpl, loc, shift, examples)
+            if seat.get("why"):
+                ok = False
+                why = seat["why"]
         # The check's own outline -- box, rotated box, circle or polygon, as it
         # was drawn -- moved to where the part was found. It was a plain box
-        # at the match, whatever shape the region had.
+        # at the match, whatever shape the region had. The move is taken
+        # through the crop, so a turned region's outline moves along its own
+        # sides (it moved along the picture's before).
         status = "pass" if ok else "fail"
         g = []
         try:
-            ex, ey = self.mapped_roi(ctx)[:2]
-            dx, dy = loc[0] + ox - ex, loc[1] + oy - ey
+            c = np.float32([[home[0] + tw / 2.0, home[1] + th / 2.0],
+                            [loc[0] + tw / 2.0, loc[1] + th / 2.0]])
+            a, b = to_img(c)
+            dx, dy = float(b[0] - a[0]), float(b[1] - a[1])
             g = self.roi_graphic(ctx, status)
             for gr in g:
                 gr.points = [(px + dx, py + dy) for px, py in gr.points]
         except Exception:
             g = []
+        if changed is not None:
+            # the part of it that looks different, outlined
+            ys, xs = np.nonzero(changed)
+            if len(xs):
+                q = to_img([(loc[0] + xs.min(), loc[1] + ys.min()),
+                            (loc[0] + xs.max() + 1, loc[1] + ys.min()),
+                            (loc[0] + xs.max() + 1, loc[1] + ys.max() + 1),
+                            (loc[0] + xs.min(), loc[1] + ys.max() + 1)])
+                g.append(Graphic("poly", [tuple(map(float, v)) for v in q], "fail", ""))
         if not g:
             g = [Graphic("rect", [(loc[0] + ox, loc[1] + oy), (loc[0] + ox + w, loc[1] + oy + h)],
                          status, "")]
             g[0].role = "region"
-        vals = {"match": round(float(mx), 4), "mode": mode, "texture": round(texture, 1)}
+        vals = {"match": round(float(mx), 4), "mode": mode, "texture": round(texture, 1),
+                "shift_px": round(shift, 2)}
+        vals.update({k: v for k, v in seat.items() if k != "why"})
         if examples:
             vals.update(good_match=round(ok_best, 4), ng_match=round(ng_best, 4),
                         examples_ok=sum(1 for e in examples if e[0] == "ok"),
                         examples_ng=sum(1 for e in examples if e[0] == "ng"))
         return ToolResult(self.id, self.type_name, "pass" if ok else "fail", float(mx),
                           vals, g, why, (time.perf_counter() - t0) * 1000)
+
+    def _seated(self, cg, tpl, loc, shift, examples):
+        """Is the part that is there sitting where and as it should? ({values,
+        "why"}, mask of the changed patch or None).
+
+        Two tests, each switched off by 0. Shift: how far from its place the
+        part was found, once Align has put the board back -- a part pushed
+        off its pads, lifted at one end or standing up is found away from
+        where it belongs. Change: the largest patch of the part that looks
+        different from the reference part. The share good parts reach is
+        learned from the check's good pictures (the Train tab, and every
+        Model teaching run adds 16): the limit is never below 1.5 times that
+        plus 1.5 % of the part."""
+        out = {}
+        th, tw = tpl.shape[:2]
+        max_shift = float(self.p.get("max_shift", 3.0) or 0.0)
+        # Not learned from the good pictures: they are not located first, and
+        # on a real board job the board lay 42 px from the reference in most of
+        # them -- every part "moved" that far, and nothing would have failed.
+        if max_shift > 0:
+            out["shift_limit_px"] = round(max_shift, 2)
+        if max_shift > 0 and shift > max_shift:
+            out["why"] = ("found %.1f px from its place (allowed %.1f) - lifted, turned or "
+                          "not on its pads?" % (shift, max_shift))
+            return out, None
+        limit = float(self.p.get("max_change", 4.0) or 0.0) / 100.0
+        if limit <= 0:
+            return out, None
+        level = float(self.p.get("change_level", CHANGE_LEVEL) or CHANGE_LEVEL)
+        found = cg[loc[1]:loc[1] + th, loc[0]:loc[0] + tw]
+        share, mask = change_share(found, tpl, level)
+        good = _good_change(examples, tpl, level)
+        if good is not None:
+            limit = max(limit, 1.5 * good + 0.015)
+        out.update(changed_pct=round(100.0 * share, 1), change_limit_pct=round(100.0 * limit, 1))
+        if good is not None:
+            out["good_changed_pct"] = round(100.0 * good, 1)
+        if share > limit:
+            out["why"] = ("%.0f %% of the part looks different from the reference (allowed "
+                          "%.0f %%) - lifted, tilted or solder missing?" % (100 * share,
+                                                                           100 * limit))
+            return out, mask
+        return out, None
+
+
+_GOOD_CHANGE = {}
+
+
+def _good_change(examples, tpl, level):
+    """The largest change_share any of the check's good pictures has against
+    the reference part, or None without good pictures. Kept with the
+    examples (they are cached as one list)."""
+    oks = [e[2] for e in examples if e[0] == "ok"]
+    if not oks:
+        return None
+    key = (tuple(e[1] for e in examples), tpl.shape, int(tpl.sum()), float(level))
+    hit = _GOOD_CHANGE.get(key)
+    if hit is not None:
+        return hit
+    vals = []
+    for patch in oks:
+        if patch.shape == tpl.shape:
+            vals.append(change_share(patch, tpl, level)[0])
+    v = max(vals) if vals else None
+    if len(_GOOD_CHANGE) > EXAMPLES_MAX:
+        _GOOD_CHANGE.clear()
+    if v is not None:
+        _GOOD_CHANGE[key] = v
+    return v

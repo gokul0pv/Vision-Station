@@ -1,4 +1,4 @@
-// Line icons in the manner of SF Symbols: 24-unit grid, round caps and joins.
+// Line icons: 24-unit grid, round caps and joins, a little heavier than hairline.
 const ICON_PATHS = {
   run: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none"/>',
@@ -34,6 +34,8 @@ const ICON_PATHS = {
   text: '<path d="M5 6.5V5h14v1.5M12 5v14M9 19h6"/>',
   layers: '<path d="M12 3.5l9 4.5-9 4.5-9-4.5z"/><path d="M3 12.5l9 4.5 9-4.5"/>',
   search: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+  move: '<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  resize: '<path d="M4 12h16"/><path d="M7.5 8.5L4 12l3.5 3.5M16.5 8.5L20 12l-3.5 3.5"/>',
   save: '<path d="M5 4h11l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
 };
 const TOOL_ICON = { presence: 'ok', ocv: 'text', ocr: 'text', code_read: 'barcode', count_template: 'layers',
@@ -42,6 +44,6 @@ const TOOL_ICON = { presence: 'ok', ocv: 'text', ocr: 'text', code_read: 'barcod
 
 function icon(name, cls) {
   const body = ICON_PATHS[name] || ICON_PATHS.info;
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
     stroke-linecap="round" stroke-linejoin="round" class="${cls || ''}">${body}</svg>`;
 }
