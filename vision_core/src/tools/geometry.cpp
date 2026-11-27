@@ -2,6 +2,7 @@
 // Fits go through numpy's own LAPACK (core/linalg) and the consensus search
 // through numpy's own random generator (core/nprandom), so every number
 // matches Vision Station's.
+#include "../core/npsort.hpp"
 #include "geom.hpp"
 
 #include "../core/linalg.hpp"
@@ -76,7 +77,13 @@ std::vector<std::pair<double, double>> profile_edges(const std::vector<float>& p
     std::vector<int> peaks;
     for (int i = 1; i + 1 < (int)cand.size(); i++)
         if (cand[i] >= cand[i - 1] && cand[i] > cand[i + 1] && cand[i] >= mc) peaks.push_back(i);
-    std::stable_sort(peaks.begin(), peaks.end(), [&](int a, int b) { return -cand[a] < -cand[b]; });
+    {   // peaks[np.argsort(-cand[peaks])]
+        std::vector<float> neg;
+        for (int i : peaks) neg.push_back(-cand[i]);
+        std::vector<int> sorted;
+        for (auto k : npy::argsort(neg.data(), neg.size())) sorted.push_back(peaks[(size_t)k]);
+        peaks = sorted;
+    }
     std::vector<int> pick{top};
     for (int i : peaks)
         if (i != top && (int)pick.size() < most) pick.push_back(i);
@@ -724,6 +731,12 @@ public:
             return ToolResult(id, type_name, "error", 0.0, Json::object(), {},
                               "no result from " + (m.empty() ? std::string("'first'") : m) + " - it must run earlier and succeed", now_ms() - t0);
         }
+        // Python: A["type"] on a published blob list
+        auto need_dict = [](const std::optional<Json>& f) {
+            if (f && !f->is_object()) throw std::runtime_error("TypeError: list indices must be integers or slices, not str");
+        };
+        need_dict(A);
+        if (B) need_dict(B);
         Json vals = Json::object();
         std::vector<Graphic> gr;
         std::string unit = "px", what;

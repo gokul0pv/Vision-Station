@@ -43,4 +43,9 @@ double median_u8(std::vector<uint8_t> a);
 // np.gradient of float32 data (edge_order 1) -> float32
 std::vector<float> gradient_f32(const std::vector<float>& f);
 
+// np.var() of a float32 array -> float32 (ddof 0)
+float var_f32(const float* a, size_t n);
+// CPython's math.hypot(x, y) (vector_norm: exact scaling, compensated sum, one
+// correction step) -- not the C library's hypot, which can differ in the last bit
+double py_hypot(double x, double y);
 }  // namespace vc::npy

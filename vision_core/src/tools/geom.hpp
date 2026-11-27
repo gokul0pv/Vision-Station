@@ -52,6 +52,10 @@ std::pair<cv::Mat, cv::Point> raw_plane(Tool& t, const cv::Mat& image, const Con
 // base.passed_feature: another tool's published feature, if that tool passed
 std::optional<Json> passed_feature(const Context& ctx, const std::string& id);
 
+// more_tools._fit_ellipse_robust
+struct EllipseFit { double cx, cy, a, b, ang; std::vector<double> resid; std::vector<int> keep; };
+EllipseFit fit_ellipse_robust(const std::vector<double>& pts, int ignore);
+
 // numpy float32 mean / sum over rows (axis 0) and along rows (axis 1) of a CV_32F matrix
 std::vector<float> mean_axis0(const cv::Mat& g);
 std::vector<float> mean_axis1(const cv::Mat& g);

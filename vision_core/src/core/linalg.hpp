@@ -19,6 +19,13 @@ std::vector<double> svd_vh(const double* a, int m, int n);
 // np.linalg.lstsq(A, b, rcond=None)[0] for an m x n row-major A and one right-hand side
 std::vector<double> lstsq(const double* A, const double* b, int m, int n);
 
+// the same with several right-hand sides: B is m x k row-major, the result n x k row-major
+std::vector<double> lstsq(const double* A, const double* B, int m, int n, int k);
+// np.linalg.det of an n x n row-major matrix (LU, then sign * exp(sum log|u_ii|), as numpy)
+double det(const double* a, int n);
+// numpy matmul of two matrices as cblas_dgemm(RowMajor, ta, tb, M, N, K, A, lda, B, ldb)
+std::vector<double> gemm(bool transA, bool transB, int M, int N, int K, const double* A, int lda, const double* B, int ldb);
+
 // numpy matmul of a C-contiguous (m, n) matrix with an (n,) vector
 std::vector<double> matvec(const double* a, const double* x, int m, int n);
 std::vector<float> matvec(const float* a, const float* x, int m, int n);

@@ -67,6 +67,46 @@ std::vector<int64_t> OnnxModel::input_shape() const {
     return impl_->sess->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
 }
 
+std::map<std::string, std::string> OnnxModel::metadata() const {
+    std::map<std::string, std::string> out;
+    Ort::AllocatorWithDefaultOptions alloc;
+    auto meta = impl_->sess->GetModelMetadata();
+    for (auto& k : meta.GetCustomMetadataMapKeysAllocated(alloc)) {
+        auto v = meta.LookupCustomMetadataMapAllocated(k.get(), alloc);
+        out[k.get()] = v ? v.get() : "";
+    }
+    return out;
+}
+
+std::string resolve_device(const std::string& device) {
+    std::string d = device;
+    while (!d.empty() && std::isspace((unsigned char)d.back())) d.pop_back();
+    while (!d.empty() && std::isspace((unsigned char)d.front())) d.erase(d.begin());
+    for (auto& c : d) c = (char)std::toupper((unsigned char)c);
+    if (d.empty() || d == "AUTO") {
+        const char* v = std::getenv("VS_DEVICE");
+        std::string e = v ? v : "";
+        while (!e.empty() && std::isspace((unsigned char)e.back())) e.pop_back();
+        while (!e.empty() && std::isspace((unsigned char)e.front())) e.erase(e.begin());
+        for (auto& c : e) c = (char)std::toupper((unsigned char)c);
+        return e == "GPU" ? "GPU" : "CPU";
+    }
+    return d == "GPU" ? "GPU" : "CPU";
+}
+
+std::shared_ptr<OnnxModel> load_model(const std::string& path, const std::string& device) {
+    static std::mutex m;
+    static std::map<std::string, std::shared_ptr<OnnxModel>> cache;
+    std::string dev = resolve_device(device);
+    std::string key = std::filesystem::absolute(std::filesystem::u8path(path)).u8string() + "|" + dev;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    auto mdl = std::make_shared<OnnxModel>(path, dev);
+    cache[key] = mdl;
+    return mdl;
+}
+
 std::vector<Tensor> OnnxModel::run(const float* data, const std::vector<int64_t>& shape) {
     size_t n = 1;
     for (auto d : shape) n *= (size_t)d;

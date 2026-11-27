@@ -217,8 +217,10 @@ Inspection Project::inspect(const std::map<std::string, cv::Mat>& in_frames, con
     std::set<std::string> fixture_ran;
     std::map<std::string, ToolResult> by_id;
     std::set<std::string> geo_types;
-    for (auto& t : tools)
+    for (auto& t : tools) {
         if (t->changes_geometry()) geo_types.insert(t->id);
+        ctx.tools[t->id] = t.get();
+    }
 
     for (auto& tp : tools) {
         Tool& tool = *tp;

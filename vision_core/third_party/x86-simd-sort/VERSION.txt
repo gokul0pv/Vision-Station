@@ -1,0 +1,1 @@
+intel/x86-simd-sort 9a1b616d5cd4eaf49f7664fb86ccc1d18bad2b8d (the commit numpy 2.1.3 bundles), src/ only

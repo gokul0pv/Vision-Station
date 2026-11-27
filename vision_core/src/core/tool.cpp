@@ -238,9 +238,12 @@ std::pair<cv::Mat, cv::Point> Tool::crop(const cv::Mat& image, const Context& ct
     double fix_rot = 0.0;
     bool shifted = false;
     if (!ctx.fixture.empty()) {
-        fix_rot = std::atan2((double)ctx.fixture.at<float>(1, 0), (double)ctx.fixture.at<float>(0, 0)) * 180.0 / kPi;
+        // float32 from align, float64 from fixture_npoint -- as the Python keeps them
+        auto q = [&](int i, int j) {
+            return ctx.fixture.type() == CV_64F ? ctx.fixture.at<double>(i, j) : (double)ctx.fixture.at<float>(i, j);
+        };
+        fix_rot = std::atan2(q(1, 0), q(0, 0)) * 180.0 / kPi;
         if (roi) {
-            auto q = [&](int i, int j) { return (double)ctx.fixture.at<float>(i, j); };
             double tx = q(0, 0) * (*roi)[0] + q(0, 1) * (*roi)[1] + q(0, 2);
             double ty = q(1, 0) * (*roi)[0] + q(1, 1) * (*roi)[1] + q(1, 2);
             shifted = std::abs(tx - std::nearbyint(tx)) > 0.01 || std::abs(ty - std::nearbyint(ty)) > 0.01;

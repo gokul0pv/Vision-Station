@@ -1,6 +1,7 @@
 // Counting and presence (vision_station/tools/count.py): Part present (with
 // its Train-tab OK/NG examples and the seated check), Count by shape, Count
 // blobs.
+#include "../core/npsort.hpp"
 #include "../core/engine.hpp"
 #include "../core/npy.hpp"
 #include "../core/pyfmt.hpp"
@@ -440,9 +441,8 @@ VC_REGISTER("presence", Presence)
 // count.nms: indices kept, best first (scores sorted descending as numpy's
 // argsort()[::-1] orders them)
 std::vector<int> nms(const std::vector<std::array<float, 4>>& b, const std::vector<float>& s, double iou_thr) {
-    std::vector<int> order(b.size());
-    for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
-    std::stable_sort(order.begin(), order.end(), [&](int i, int j) { return s[i] < s[j]; });
+    std::vector<int> order;
+    for (auto k : npy::argsort(s.data(), s.size())) order.push_back((int)k);   // numpy's argsort, ties included
     std::reverse(order.begin(), order.end());
     std::vector<int> keep;
     while (!order.empty()) {

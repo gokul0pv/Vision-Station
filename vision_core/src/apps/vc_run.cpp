@@ -5,6 +5,7 @@
 #include "../core/engine.hpp"
 #include "../core/linalg.hpp"
 #include "../core/nprandom.hpp"
+#include "../core/npsort.hpp"
 
 #include <opencv2/core/utility.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -62,6 +63,27 @@ int wmain(int argc, wchar_t** wargv) {
         auto mf = la::matvec(Pf, xf, 6, 2);
         j["matvec_f32"] = std::vector<double>(mf.begin(), mf.end());
         j["dot"] = la::dot(P, P + 2, 2);
+        // argsort with many ties, sizes 1..300 (same arrays as tests/npy_selftest.py)
+        j["det"] = la::det(P, 2);
+        j["gemm"] = la::gemm(false, true, 2, 6, 2, P, 2, P, 2);
+        j["lstsq2"] = la::lstsq(A, P, 6, 3, 2);
+        j["argsort_path"] = npy::argsort_path();
+        Json as = Json::array();
+        npr::Generator ag(7);
+        for (int n = 1; n <= 300; n += (n < 40 ? 1 : 13)) {
+            std::vector<float> f(n);
+            std::vector<double> d(n);
+            std::vector<int64_t> q(n);
+            for (int i = 0; i < n; i++) {
+                q[i] = ag.integers(6);
+                f[i] = (float)q[i] * 0.5f;
+                d[i] = (double)q[i] * 0.25;
+            }
+            as.push_back(npy::argsort(f.data(), n));
+            as.push_back(npy::argsort(d.data(), n));
+            as.push_back(npy::argsort(q.data(), n));
+        }
+        j["argsort"] = as;
         std::cout << j.dump() << std::endl;
         return 0;
     }

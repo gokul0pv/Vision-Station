@@ -1,3 +1,4 @@
+#include "../core/npsort.hpp"
 #include "ocr_engine.hpp"
 
 #include "../core/npy.hpp"
@@ -287,9 +288,12 @@ std::vector<std::pair<Box, double>> merge_across_tiles(const std::vector<Found>&
         }
         return i;
     };
-    std::vector<int> ord(n);
-    for (size_t i = 0; i < n; i++) ord[i] = (int)i;
-    std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return rects[a][0] < rects[b][0]; });
+    std::vector<int> ord;
+    {   // np.argsort(rects[:, 0])
+        std::vector<float> x0;
+        for (size_t i = 0; i < n; i++) x0.push_back(rects[i][0]);
+        for (auto k : npy::argsort(x0.data(), x0.size())) ord.push_back((int)k);
+    }
     for (size_t pos = 0; pos < n; pos++) {
         int i = ord[pos];
         float ax0 = rects[i][0], ay0 = rects[i][1], ax1 = rects[i][2], ay1 = rects[i][3];

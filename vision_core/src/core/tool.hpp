@@ -17,7 +17,7 @@ namespace vc {
 
 struct Context {
     cv::Mat reference;                         // BGR, or empty
-    cv::Mat fixture;                           // 3x3 CV_32F reference -> picture, or empty
+    cv::Mat fixture;                           // 3x3 reference -> picture (CV_32F from align, CV_64F from fixture_npoint), or empty
     double mm_per_px = 0.0;
     std::string folder;
     std::map<std::string, std::any> share;
@@ -26,6 +26,8 @@ struct Context {
     std::map<std::string, cv::Mat> ref_images;
     bool want_records = false;
     std::map<std::string, std::map<std::string, cv::Mat>> records;
+    std::map<std::string, class Tool*> tools;  // every tool of the job, by id (fixture_npoint runs some on the reference)
+    cv::Mat world;                             // 2x3 pixel -> world from calibrate_npoint, or empty
 };
 
 class Tool {

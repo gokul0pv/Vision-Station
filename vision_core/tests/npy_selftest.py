@@ -15,7 +15,18 @@ A = np.column_stack([P[:, 0], P[:, 1], np.ones(6)]); b = P[:, 0] ** 2 + P[:, 1] 
 x = np.float64([-0.6, 0.8]); Pf = P.astype(np.float32) * np.float32(1.37)
 py = {'rng': seq, 'svd': np.linalg.svd(P)[2].ravel().tolist(), 'lstsq': np.linalg.lstsq(A, b, rcond=None)[0].tolist(),
       'matvec': (P @ x).tolist(), 'matvec_f32': (Pf @ np.float32([-0.6, 0.8])).astype(float).tolist(), 'dot': float(P[0] @ P[1])}
-print('blas:', vc['blas'])
+ag = np.random.default_rng(7)
+asl = []
+n = 1
+while n <= 300:
+    q = np.array([int(ag.integers(6)) for _ in range(n)], np.int64)
+    asl += [q.astype(np.float32).__mul__(np.float32(0.5)).argsort().tolist(), (q.astype(np.float64) * 0.25).argsort().tolist(), q.argsort().tolist()]
+    n += 1 if n < 40 else 13
+py['argsort'] = asl
+py['det'] = float(np.linalg.det(P[:2]))
+py['gemm'] = (P[:2] @ P.T).ravel().tolist()
+py['lstsq2'] = np.linalg.lstsq(A, P, rcond=None)[0].ravel().tolist()
+print('blas:', vc['blas'], '| argsort:', vc['argsort_path'])
 bad = 0
 for k, v in py.items():
     same = v == vc[k]

@@ -39,6 +39,9 @@ add_library(vc_core STATIC
     src/core/npy.cpp
     src/core/linalg.cpp
     src/core/nprandom.cpp
+    src/core/npsort.cpp
+    src/core/npsort_avx2.cpp
+    src/core/npsort_avx512.cpp
     src/core/pyfmt.cpp
     src/core/tool.cpp
     src/core/engine.cpp
@@ -52,6 +55,9 @@ add_library(vc_core STATIC
     src/tools/image.cpp
     src/tools/geometry.cpp
     src/tools/plots.cpp
+    src/tools/analysis.cpp
+    src/tools/more_tools.cpp
+    src/tools/construct.cpp
     src/tools/measure.cpp
     src/tools/ocr_engine.cpp
     src/tools/text.cpp
@@ -59,6 +65,10 @@ add_library(vc_core STATIC
 target_include_directories(vc_core PUBLIC third_party third_party/sqlite)
 set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_DEFINITIONS "SQLITE_THREADSAFE=1;SQLITE_DEFAULT_WAL_SYNCHRONOUS=1")
 target_link_libraries(vc_core PUBLIC opencv_world onnxruntime)
+
+# numpy's argsort: x86-simd-sort built once per instruction set, picked at run time
+set_source_files_properties(src/core/npsort_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/wd4244")
+set_source_files_properties(src/core/npsort_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/wd4244")
 
 # numpy's own OpenBLAS (loaded at run time by src/core/linalg.cpp) so fits match numpy bit for bit
 set(OPENBLAS_DIR "$ENV{LOCALAPPDATA}/vc-tools/openblas" CACHE PATH "libscipy_openblas64_*.dll from numpy.libs")

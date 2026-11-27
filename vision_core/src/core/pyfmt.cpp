@@ -15,6 +15,11 @@ std::string pyfmt(const char* fmt, double v) {
     if (std::isnan(v)) return "nan";
     if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
     char buf[512];
+    size_t L = std::strlen(fmt);
+    if (L && (fmt[L - 1] == 'g')) {   // "%.Ng": N significant digits, as printf / Python
+        auto rg = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, prec == 0 ? 1 : prec);
+        return std::string(buf, rg.ptr);
+    }
     auto r = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::fixed, prec);
     return std::string(buf, r.ptr);
 }

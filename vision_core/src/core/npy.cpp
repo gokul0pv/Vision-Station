@@ -153,4 +153,63 @@ std::vector<float> gradient_f32(const std::vector<float>& f) {
     return o;
 }
 
+float var_f32(const float* a, size_t n) {
+    if (!n) return NAN;
+    float m = mean_f32(a, n);
+    std::vector<float> d(n);
+    for (size_t i = 0; i < n; i++) {
+        float t = a[i] - m;
+        d[i] = t * t;
+    }
+    return sum_f32(d.data(), n) / (float)n;
+}
+
+namespace {
+struct DL { double hi, lo; };
+DL dl_mul(double x, double y) {
+    double h = x * y;
+    return {h, std::fma(x, y, -h)};
+}
+DL dl_fast_sum(double a, double b) {
+    double h = a + b;
+    return {h, (a - h) + b};
+}
+}  // namespace
+
+double py_hypot(double x, double y) {
+    double v[2] = {std::fabs(x), std::fabs(y)};
+    if (std::isnan(v[0]) || std::isnan(v[1])) {
+        if (std::isinf(v[0]) || std::isinf(v[1])) return INFINITY;
+        return NAN;
+    }
+    double mx = std::max(v[0], v[1]);
+    if (std::isinf(mx)) return mx;
+    if (mx == 0.0) return mx;
+    int max_e;
+    std::frexp(mx, &max_e);
+    if (max_e < -1023) {
+        const double DMIN = 2.2250738585072014e-308;
+        return DMIN * py_hypot(v[0] / DMIN, v[1] / DMIN);
+    }
+    double scale = std::ldexp(1.0, -max_e);
+    double csum = 1.0, frac1 = 0.0, frac2 = 0.0;
+    for (double x0 : v) {
+        double xs = x0 * scale;
+        DL pr = dl_mul(xs, xs);
+        DL sm = dl_fast_sum(csum, pr.hi);
+        csum = sm.hi;
+        frac1 += pr.lo;
+        frac2 += sm.lo;
+    }
+    double h = std::sqrt(csum - 1.0 + (frac1 + frac2));
+    DL pr = dl_mul(-h, h);
+    DL sm = dl_fast_sum(csum, pr.hi);
+    csum = sm.hi;
+    frac1 += pr.lo;
+    frac2 += sm.lo;
+    double xr = csum - 1.0 + (frac1 + frac2);
+    h += xr / (2.0 * h);
+    return h / scale;
+}
+
 }  // namespace vc::npy

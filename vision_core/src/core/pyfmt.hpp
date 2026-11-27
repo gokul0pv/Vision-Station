@@ -7,7 +7,7 @@
 
 namespace vc {
 
-// "%.Nf" (or "{:.Nf}") of a float: the exact value rounded half to even
+// "%.Nf" (or "{:.Nf}") of a float: the exact value rounded half to even; "%.Ng" too
 std::string pyfmt(const char* fmt, double v);
 // str(float) / repr(float): shortest round-trip digits, Python's layout
 std::string py_repr(double v);

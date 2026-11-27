@@ -29,6 +29,8 @@ enum { RowMajor = 101, ColMajor = 102, NoTrans = 111, Trans = 112 };
 using dgemv_t = void (*)(int, int, i64, i64, double, const double*, i64, const double*, i64, double, double*, i64);
 using sgemv_t = void (*)(int, int, i64, i64, float, const float*, i64, const float*, i64, float, float*, i64);
 using ddot_t = double (*)(i64, const double*, i64, const double*, i64);
+using dgemm_t = void (*)(int, int, int, i64, i64, i64, double, const double*, i64, const double*, i64, double, double*, i64);
+using dgetrf_t = void (*)(const i64*, const i64*, double*, const i64*, i64*, i64*);
 using threads_t = void (*)(int);
 
 struct Lib {
@@ -37,6 +39,8 @@ struct Lib {
     dgemv_t dgemv = nullptr;
     sgemv_t sgemv = nullptr;
     ddot_t ddot = nullptr;
+    dgemm_t dgemm = nullptr;
+    dgetrf_t dgetrf = nullptr;
     std::string where;
     bool ok = false;
 };
@@ -67,7 +71,9 @@ const Lib& lib() {
             L.dgemv = (dgemv_t)GetProcAddress(h, "scipy_cblas_dgemv64_");
             L.sgemv = (sgemv_t)GetProcAddress(h, "scipy_cblas_sgemv64_");
             L.ddot = (ddot_t)GetProcAddress(h, "scipy_cblas_ddot64_");
-            if (L.dgesdd && L.dgelsd && L.dgemv && L.sgemv && L.ddot) {
+            L.dgemm = (dgemm_t)GetProcAddress(h, "scipy_cblas_dgemm64_");
+            L.dgetrf = (dgetrf_t)GetProcAddress(h, "scipy_dgetrf_64_");
+            if (L.dgesdd && L.dgelsd && L.dgemv && L.sgemv && L.ddot && L.dgemm && L.dgetrf) {
                 if (auto t = (threads_t)GetProcAddress(h, "scipy_openblas_set_num_threads64_")) t(1);
                 L.ok = true;
                 L.where = p.u8string();
@@ -121,14 +127,17 @@ std::vector<double> svd_vh(const double* a, int m, int n) {
     return std::vector<double>((double*)vt.data, (double*)vt.data + (size_t)n * n);
 }
 
-std::vector<double> lstsq(const double* Ain, const double* b, int m, int n) {
+std::vector<double> lstsq(const double* Ain, const double* b, int m, int n) { return lstsq(Ain, b, m, n, 1); }
+
+std::vector<double> lstsq(const double* Ain, const double* b, int m, int n, int k) {
     const Lib& L = lib();
     if (L.ok && m > 0 && n > 0) {
         // init_gelsd + call_gelsd; rcond = finfo(float64).eps * max(m, n)
-        i64 M = m, N = n, nrhs = 1, lda = std::max(m, 1), ldb = std::max(std::max(m, n), 1), rank = 0, info = 0;
+        i64 M = m, N = n, nrhs = k, lda = std::max(m, 1), ldb = std::max(std::max(m, n), 1), rank = 0, info = 0;
         double rcond = 2.220446049250313e-16 * std::max(m, n);
-        std::vector<double> A = fortran(Ain, m, n), B((size_t)ldb, 0.0), S(std::min(m, n));
-        for (int i = 0; i < m; i++) B[i] = b[i];
+        std::vector<double> A = fortran(Ain, m, n), B((size_t)ldb * k, 0.0), S(std::min(m, n));
+        for (int c = 0; c < k; c++)
+            for (int i = 0; i < m; i++) B[(size_t)c * ldb + i] = b[(size_t)i * k + c];
         double wq = 0;
         i64 iwq = 0, lwork = -1;
         L.dgelsd(&M, &N, &nrhs, A.data(), &lda, B.data(), &ldb, S.data(), &rcond, &rank, &wq, &lwork, &iwq, &info);
@@ -137,12 +146,61 @@ std::vector<double> lstsq(const double* Ain, const double* b, int m, int n) {
             std::vector<double> work((size_t)std::max<i64>(lwork, 1));
             std::vector<i64> iwork((size_t)std::max<i64>(iwq, 1));
             L.dgelsd(&M, &N, &nrhs, A.data(), &lda, B.data(), &ldb, S.data(), &rcond, &rank, work.data(), &lwork, iwork.data(), &info);
-            if (info == 0) return std::vector<double>(B.begin(), B.begin() + n);
+            if (info == 0) {
+                std::vector<double> x((size_t)n * k);
+                for (int c = 0; c < k; c++)
+                    for (int i = 0; i < n; i++) x[(size_t)i * k + c] = B[(size_t)c * ldb + i];
+                return x;
+            }
         }
     }
-    cv::Mat A(m, n, CV_64F, const_cast<double*>(Ain)), B(m, 1, CV_64F, const_cast<double*>(b)), x;
+    cv::Mat A(m, n, CV_64F, const_cast<double*>(Ain)), B(m, k, CV_64F, const_cast<double*>(b)), x;
     cv::solve(A, B, x, cv::DECOMP_SVD);
-    return std::vector<double>((double*)x.data, (double*)x.data + n);
+    return std::vector<double>((double*)x.data, (double*)x.data + (size_t)n * k);
+}
+
+double det(const double* a, int n) {
+    const Lib& L = lib();
+    std::vector<double> A = fortran(a, n, n);
+    if (L.ok && n > 0) {
+        i64 N = n, lda = n, info = 0;
+        std::vector<i64> piv(n);
+        L.dgetrf(&N, &N, A.data(), &lda, piv.data(), &info);
+        if (info < 0) return NAN;
+        // umath_linalg slogdet_single_element + det_from_slogdet
+        double sign = 1.0, logdet = 0.0;
+        if (info == 0) {
+            for (int i = 0; i < n; i++) sign = piv[i] != i + 1 ? -sign : sign;
+            for (int i = 0; i < n; i++) {
+                double e = A[(size_t)i * n + i];
+                if (e < 0) {
+                    sign = -sign;
+                    e = -e;
+                }
+                logdet += std::log(e);
+            }
+        } else {
+            sign = 0.0;
+            logdet = -INFINITY;
+        }
+        return sign * std::exp(logdet);
+    }
+    return cv::determinant(cv::Mat(n, n, CV_64F, const_cast<double*>(a)));
+}
+
+std::vector<double> gemm(bool ta, bool tb, int M, int N, int K, const double* A, int lda, const double* B, int ldb) {
+    std::vector<double> C((size_t)M * N, 0.0);
+    if (lib().ok) {
+        lib().dgemm(RowMajor, ta ? Trans : NoTrans, tb ? Trans : NoTrans, M, N, K, 1.0, A, lda, B, ldb, 0.0, C.data(), N);
+        return C;
+    }
+    for (int i = 0; i < M; i++)
+        for (int j = 0; j < N; j++) {
+            double s = 0;
+            for (int k = 0; k < K; k++) s += (ta ? A[(size_t)k * lda + i] : A[(size_t)i * lda + k]) * (tb ? B[(size_t)j * ldb + k] : B[(size_t)k * ldb + j]);
+            C[(size_t)i * N + j] = s;
+        }
+    return C;
 }
 
 template <class T, class F>
