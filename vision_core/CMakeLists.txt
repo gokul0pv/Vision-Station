@@ -44,6 +44,7 @@ add_library(vc_core STATIC
     src/core/codes.cpp
     src/core/pyre.cpp
     src/core/annotate.cpp
+    src/core/advanced.cpp
     third_party/miniz/miniz.c
     src/core/npsort_avx2.cpp
     src/core/npsort_avx512.cpp

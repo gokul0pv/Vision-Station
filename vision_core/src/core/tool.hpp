@@ -27,6 +27,7 @@ struct Context {
     bool want_records = false;
     std::map<std::string, std::map<std::string, cv::Mat>> records;
     std::map<std::string, class Tool*> tools;  // every tool of the job, by id (fixture_npoint runs some on the reference)
+    std::vector<class Tool*> tool_order;       // the same, in the job's order
     cv::Mat world;                             // 2x3 pixel -> world from calibrate_npoint, or empty
 };
 

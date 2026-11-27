@@ -134,6 +134,8 @@ void Project::load() {
         if (!registry().count(t.value("type", "")) && std::getenv("VC_SKIP_UNKNOWN")) continue;   // tests only
         tools.push_back(make_tool(t));
     }
+    // the job's own trained network, when advanced training made one
+    advanced = advanced::load(folder, spec);
 }
 
 static std::string new_id() {
@@ -224,6 +226,7 @@ Inspection Project::inspect(const std::map<std::string, cv::Mat>& in_frames, con
     for (auto& t : tools) {
         if (t->changes_geometry()) geo_types.insert(t->id);
         ctx.tools[t->id] = t.get();
+        ctx.tool_order.push_back(t.get());
     }
 
     for (auto& tp : tools) {
@@ -279,6 +282,7 @@ Inspection Project::inspect(const std::map<std::string, cv::Mat>& in_frames, con
             bool ok = guarded([&] {
                 r = tool.run(frame, ctx);
                 tool.correct_graphics(r, ctx);
+                if (advanced) advanced::apply(*advanced, tool, r, frame, ctx);
             }, err);
             if (!ok) r = ToolResult(tool.id, tool.type_name, "error", 0.0, Json::object(), {}, err, now_ms() - ts);
             for (auto& [k, v] : ctx.images)

@@ -1,6 +1,7 @@
 // A side's recipe and its run (vision_station/core/engine.py Project.inspect).
 #pragma once
 
+#include "advanced.hpp"
 #include "tool.hpp"
 
 #include <memory>
@@ -33,6 +34,7 @@ public:
     cv::Mat reference;
     Json calibration;                          // null when none
     std::vector<std::unique_ptr<Tool>> tools;
+    std::shared_ptr<advanced::Detector> advanced;   // null unless advanced training made one
 };
 
 // cv2.imread for any path (np.fromfile + imdecode); empty when unreadable
