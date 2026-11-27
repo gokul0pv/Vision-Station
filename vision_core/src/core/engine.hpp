@@ -17,6 +17,7 @@ struct Inspection {
     std::string aborted, barcode_ng;           // empty = none
     std::vector<std::string> failed_tools;
     std::vector<ToolResult> tools;
+    std::map<std::string, cv::Mat> images;     // images tools made (image_process, transforms), by tool id
     Json to_json() const;
 };
 

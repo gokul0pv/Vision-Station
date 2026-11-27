@@ -333,6 +333,7 @@ Inspection Project::inspect(const std::map<std::string, cv::Mat>& in_frames, con
     out.aborted = aborted;
     out.barcode_ng = barcode_ng;
     out.tools = std::move(results);
+    out.images = ctx.images;
     return out;
 }
 

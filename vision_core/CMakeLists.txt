@@ -47,6 +47,7 @@ add_library(vc_core STATIC
     src/tools/align.cpp
     src/tools/count.cpp
     src/tools/color.cpp
+    src/tools/image.cpp
     src/tools/measure.cpp
     src/tools/ocr_engine.cpp
     src/tools/text.cpp

@@ -1,11 +1,14 @@
 // vc-run: Vision Core without a window.
 //   vc-run inspect <side folder> <picture or folder> [--json]   one JSON line per picture
+//   ... --dump <dir>   also write the images tools made, <picture>__<tool>.png
 //   vc-run types                                              the check types built in
 #include "../core/engine.hpp"
 
 #include <opencv2/core/utility.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -38,6 +41,10 @@ int wmain(int argc, wchar_t** wargv) {
     }
     if (args[0] == "inspect" && args.size() >= 3) {
         bool json = std::find(args.begin(), args.end(), "--json") != args.end();
+        fs::path dump;
+        for (size_t i = 3; i + 1 < args.size(); i++)
+            if (args[i] == "--dump") dump = fs::u8path(args[i + 1]);
+        if (!dump.empty()) fs::create_directories(dump);
         std::unique_ptr<Project> side;
         std::string err;
         if (!guarded([&] { side = std::make_unique<Project>(args[1]); }, err)) {
@@ -54,6 +61,12 @@ int wmain(int argc, wchar_t** wargv) {
             }
             Inspection r = side->inspect(img, pic.u8string());
             release_pictures();
+            if (!dump.empty()) for (auto& [tid, im] : r.images) {
+                std::vector<uchar> buf;
+                if (im.empty() || !cv::imencode(".png", im, buf)) continue;
+                std::ofstream f(dump / fs::u8path(pic.filename().u8string() + "__" + tid + ".png"), std::ios::binary);
+                if (f) f.write((const char*)buf.data(), (std::streamsize)buf.size());
+            }
             n++;
             total += r.total_ms;
             if (r.verdict != "PASS") notpass++;
